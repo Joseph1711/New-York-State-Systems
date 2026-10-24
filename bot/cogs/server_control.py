@@ -431,7 +431,7 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
                 ">\n"
                 "> Ya puedes ingresar al servidor de Roleplay.\n"
                 ">\n"
-                f"> **Código del servidor: `{SERVER_CODE}`**"
+                f"> **Código del servidor: `NYStateRPS`**"
             ),
             color=COLOR_SUCCESS
         )
@@ -621,13 +621,13 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
                 description=(
                     "> **New York State Roleplay Spanish está actualmente ABIERTO.**\n"
                     ">\n"
-                    f"> **Código oficial:** `{server_code}`\n"
+                    f"> **Código oficial:** `NYStateRPS`\n"
                     "> ¡Puedes ingresar y rolear con la comunidad!"
                 ),
                 color=COLOR_SUCCESS
             )
             embed.add_field(name="Estado", value="🟢 **Abierto**", inline=True)
-            embed.add_field(name="Código", value=f"`{server_code}`", inline=True)
+            embed.add_field(name="Código", value=f"`NYStateRPS`", inline=True)
         else:
             embed = discord.Embed(
                 title="🔴 ESTADO: SERVIDOR CERRADO",
