@@ -437,7 +437,7 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         )
 
         embed.add_field(name="Estado", value="🟢 **Abierto**", inline=True)
-        embed.add_field(name="Código", value=f"`{SERVER_CODE}`", inline=True)
+        embed.add_field(name="Código", value=f"`NYStateRPS`", inline=True)
         embed.add_field(name="Autorizado por", value=interaction.user.mention, inline=True)
 
         if anuncio_extra:
