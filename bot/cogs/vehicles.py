@@ -154,7 +154,7 @@ class RegisterVehicleModal(discord.ui.Modal):
             embed = discord.Embed(
                 title=f"{type_info['emoji']} Título de Propiedad y Tarjeta de Circulación",
                 description=(
-                    f"El Departamento de Vehículos y Tránsito de **Miami Vice** ha matriculado legalmente esta unidad.\n"
+                    f"El Departamento de Vehículos y Tránsito de **NYSRP** ha matriculado legalmente esta unidad.\n"
                     f"La placa oficial y el número de chasis han sido emitidos."
                 ),
                 color=COLOR_PRIMARY
@@ -315,7 +315,7 @@ class Vehicles(commands.Cog):
             embed = discord.Embed(
                 title=f"{type_info['emoji']} Título de Propiedad y Tarjeta de Circulación",
                 description=(
-                    f"El Departamento de Tránsito y Transporte de **Miami Vice** ha registrado oficialmente esta unidad.\n"
+                    f"El Departamento de Tránsito y Transporte de **NYSRP** ha registrado oficialmente esta unidad.\n"
                     f"La placa de circulación y el número de chasis han sido emitidos."
                 ),
                 color=COLOR_PRIMARY

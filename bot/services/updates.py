@@ -16,7 +16,7 @@ from bot.helpers import generate_id
 
 logger = logging.getLogger("bot.updates")
 
-DEFAULT_REPO = "Joseph1711/miami-vice-rp"
+DEFAULT_REPO = "Joseph1711/New-York-State-Systems"
 
 # Intros with bot personality (sarcastic, funny, slightly vulgar, survivor tone)
 SARCASTIC_TITLES = [
@@ -24,7 +24,7 @@ SARCASTIC_TITLES = [
     "🚨 SÍ, SIGO VIVO. OTRA PUTA ACTUALIZACIÓN MÁS.",
     "🚨 ME REINICIARON A LA FUERZA Y AQUÍ ESTOY DE NUEVO.",
     "🚨 SOBREVIVÍ A OTRA SESIÓN DE TORTURA DE CÓDIGO.",
-    "🚨 MILAGRO EN MIAMI: NO EXPLOTÉ CON EL ÚLTIMO PARCHE."
+    "🚨 MILAGRO EN NEW YORK: NO EXPLOTÉ CON EL ÚLTIMO PARCHE."
 ]
 
 SARCASTIC_INTROS = [
@@ -35,23 +35,21 @@ SARCASTIC_INTROS = [
 ]
 
 SARCASTIC_OUTROS = [
-    "«Si algo deja de funcionar después de esta actualización... yo no fui. 💀»\n— *Miami Vice RP Bot*",
-    "«Si el servidor se prende fuego o la economía colapsa, culpen a los programadores, a mí no me miren. 💀»\n— *Miami Vice RP Bot*",
-    "«Cualquier fallo reclámenlo en un ticket; yo solo soy una víctima de sus experimentos. 💀»\n— *Miami Vice RP Bot*",
-    "«Si encuentran un bug, recuerden: no es un bug, es una 'característica sorpresa'. 💀»\n— *Miami Vice RP Bot*"
+    "«Si algo deja de funcionar después de esta actualización... yo no fui. 💀»\n— *NYSRP Bot*",
+    "«Si el servidor se prende fuego o la economía colapsa, culpen a los programadores, a mí no me miren. 💀»\n— *NYSRP Bot*",
+    "«Cualquier fallo reclámenlo en un ticket; yo solo soy una víctima de sus experimentos. 💀»\n— *NYSRP Bot*",
+    "«Si encuentran un bug, recuerden: no es un bug, es una 'característica sorpresa'. 💀»\n— *NYSRP Bot*"
 ]
 
 
 def clean_commit_message(msg: str) -> str:
     """Limpia prefijos técnicos comunes de git/conventional commits para que sea legible sin inventar nada."""
     line = msg.strip().split("\n")[0]
-    # Remove conventional commit types like 'fix(dni):', 'feat:', 'refactor(web):'
     m = re.match(r"^(?:feat|fix|refactor|perf|chore|docs|style|test|build|ci)(?:\([^)]+\))?:\s*(.*)$", line, re.IGNORECASE)
     if m:
         cleaned = m.group(1).strip()
     else:
         cleaned = line
-    # Capitalize first letter
     if cleaned:
         cleaned = cleaned[0].upper() + cleaned[1:]
     return cleaned
@@ -96,7 +94,6 @@ def build_announcement_text(
     changes_formatted = format_changes_list(changes)
     changes_text = "\n".join(changes_formatted)
 
-    # Full text representation
     full_text = f"**{title}**\n\n{intro}\n\n"
     if description:
         full_text += f"📝 *{description.strip()}*\n\n"
@@ -106,7 +103,6 @@ def build_announcement_text(
         full_text += f" (Commit `{commit_sha[:7]}`)"
     full_text += f"\n\n📅 **FECHA**\n{date_str}\n\n{outro}"
 
-    # Discord Embed representation
     embed = None
     if discord:
         embed = discord.Embed(
@@ -231,13 +227,12 @@ async def record_published_update(
     changes_json = json.dumps(changes, ensure_ascii=False)
 
     await aexecute(
-        """INSERT INTO bot_updates_history 
+        """INSERT INTO bot_updates_history
            (id, guild_id, version, title, changes, description, commit_sha, source, published_by, channel_id, message_id, published_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())""",
         (rec_id, gid, version, title, changes_json, description or "", commit_sha or "", source, published_by, channel_id or "", message_id or "")
     )
 
-    # Update last_commit_sha in config
     if commit_sha:
         await aexecute(
             "UPDATE update_config SET last_commit_sha=$1, updated_at=NOW() WHERE guild_id=$2",

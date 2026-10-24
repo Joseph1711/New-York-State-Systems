@@ -14,25 +14,17 @@ ruta mal escrita se detectan de inmediato.
 """
 
 import logging
-
 import discord
 from discord import app_commands
 from discord.ext import commands
-
 from bot.embeds import error_embed
 from bot.helpers import check_admin_permission
 
 logger = logging.getLogger("bot.guia")
 
-# Discord admite 25 campos por embed y 1024 caracteres por valor de campo.
 EMBED_MAX_FIELDS = 25
 FIELD_MAX = 1024
 COLOR = discord.Colour(0x1ABC9C)
-
-
-# ---------------------------------------------------------------------------
-# Catalogo: un bloque por area, ordenado por prioridad (1 = lo mas vital)
-# ---------------------------------------------------------------------------
 
 SECCIONES = [
     {
@@ -68,7 +60,7 @@ SECCIONES = [
             ("/dni ver",
              "Muestra el DNI oficial de un ciudadano con el avatar de su personaje.", "Todos"),
             ("/dni buscar",
-             "Localiza a un ciudadano por su numero de DNI, del tipo MIA-123456.", "Todos"),
+             "Localiza a un ciudadano por su numero de DNI, del tipo NYS-123456.", "Todos"),
             ("/dni revocar",
              "Revoca o suspende el DNI de un ciudadano.", "Admin / Policia"),
             ("/roblox vincular",
@@ -203,7 +195,7 @@ SECCIONES = [
                                 "paga solo el porcentaje que cubre y avisa del resto.",
              "Dueno / Gerente"),
             ("/empresa menu", "Muestra productos y servicios con los precios que fijo el dueno. Publico y "
-                           "con boton de compra.", "Todos"),
+                               "con boton de compra.", "Todos"),
             ("/empresa plantilla puestos", "Puestos definidos por el dueno, con su salario y su "
                                            "cupo.", "Dueno / Gerente"),
             ("/empresa plantilla crear_puesto", "Crea o edita un puesto con nombre, salario, rol de "
@@ -277,7 +269,7 @@ SECCIONES = [
             ("/departamento lista", "Todos los departamentos oficiales activos del servidor.",
              "Todos"),
             ("/departamento info", "Ficha detallada de un departamento por su acronimo.", "Todos"),
-            ("/departamento presupuesto", "Consulta el presupuesto disponible y gastado de un "
+            ("/departamento presupuesto", "Consulta el presupuesto disponible y gastCado de un "
                                           "departamento.", "Todos"),
             ("/departamento postular", "Envia solicitud de ingreso indicando tu acronimo y tus "
                                        "motivos.", "Ciudadanos"),
@@ -570,7 +562,7 @@ def _indice_embed() -> discord.Embed:
     """Portada: el mapa completo ordenado de mas a menos importante."""
     secciones = secciones_ordenadas()
     embed = discord.Embed(
-        title="\U0001F4D6 Guia de funcionamiento \u2014 Miami Vice RP",
+        title="\U0001F4D6 Guia de funcionamiento — NYSRP",
         description=(
             f"Manual de los **{total_comandos()} comandos** del bot, ordenados de mas a menos "
             f"importante.\nCada seccion explica **que hace** cada comando, **como se usa** y **quien "
@@ -584,7 +576,7 @@ def _indice_embed() -> discord.Embed:
             value=f"{seccion['resumen']}\n**{len(seccion['comandos'])} comandos**"[:FIELD_MAX],
             inline=False,
         )
-    embed.set_footer(text="MVERP \u00b7 Solo administradores")
+    embed.set_footer(text="NYSRP · Solo administradores")
     return embed
 
 
@@ -596,16 +588,16 @@ def _bloques(seccion):
     for numero, bloque in enumerate(_paginas(comandos), start=1):
         embed = discord.Embed(
             title=f"{seccion['emoji']} {seccion['nombre']}",
-            description=(f"**Prioridad {seccion['prioridad']}** \u00b7 {len(comandos)} comandos\n"
+            description=(f"**Prioridad {seccion['prioridad']}** · {len(comandos)} comandos\n"
                          f"{seccion['resumen']}" if numero == 1
-                         else f"{seccion['nombre']} \u00b7 continuacion"),
+                         else f"{seccion['nombre']} · continuacion"),
             colour=COLOR,
         )
         for ruta, que_hace, quien in bloque:
             embed.add_field(name=f"`{ruta}`",
                             value=f"{que_hace}\n*Acceso:* {quien}"[:FIELD_MAX],
                             inline=False)
-        embed.set_footer(text=f"MVERP \u00b7 Pagina {numero}/{total}")
+        embed.set_footer(text=f"NYSRP · Pagina {numero}/{total}")
         embeds.append(embed)
     return embeds
 
@@ -635,7 +627,7 @@ class Guia(commands.Cog):
         embeds = _todos_los_embeds()
         total = len(embeds)
         for numero, embed in enumerate(embeds, start=1):
-            embed.set_footer(text=f"MVERP \u00b7 {numero}/{total}")
+            embed.set_footer(text=f"NYSRP · {numero}/{total}")
             if numero == 1:
                 await interaction.response.send_message(embed=embed, ephemeral=True)
             else:

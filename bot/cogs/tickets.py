@@ -44,7 +44,6 @@ class TicketReasonModal(discord.ui.Modal, title="Abrir Ticket de Soporte"):
         uid = str(interaction.user.id)
 
         try:
-            # Comprobar límite de 3 tickets abiertos
             open_tickets = await aexecute(
                 "SELECT id FROM tickets WHERE guild_id=$1 AND creator_id=$2 AND status='open'",
                 (gid, uid), fetch="all"
@@ -61,7 +60,6 @@ class TicketReasonModal(discord.ui.Modal, title="Abrir Ticket de Soporte"):
             category_id = config.get("category_id")
             support_role_id = config.get("support_role_id")
 
-            # Permisos del canal
             overwrites = {
                 interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
                 interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, embed_links=True),
@@ -95,9 +93,8 @@ class TicketReasonModal(discord.ui.Modal, title="Abrir Ticket de Soporte"):
                 (ticket_id, gid, uid, str(channel.id), self.need_input.value[:50], self.reason_input.value, self.need_input.value[:100])
             )
 
-            # Enviar mensaje inicial dentro del canal del ticket
             e = info_embed(
-                f"🎫 Ticket #{ticket_id[:6].upper()} — Soporte NYC RP",
+                f"🎫 Ticket #{ticket_id[:6].upper()} — Soporte NYSRP",
                 f"Hola {interaction.user.mention}, el equipo de soporte te atenderá en breve.\nPor favor sé paciente y mantén una conducta respetuosa."
             )
             e.set_thumbnail(url=interaction.user.display_avatar.url)
@@ -167,7 +164,6 @@ async def execute_close_ticket(interaction: discord.Interaction):
     gid = str(interaction.guild_id)
     cid = str(interaction.channel_id)
 
-    # Buscar ticket en DB
     ticket = await aexecute(
         "SELECT * FROM tickets WHERE channel_id=$1 ORDER BY created_at DESC LIMIT 1",
         (cid,), fetch="one"
@@ -182,7 +178,6 @@ async def execute_close_ticket(interaction: discord.Interaction):
         )
     elif interaction.channel.name.startswith("ticket-") or interaction.channel.name.startswith("ticket_") or "ticket" in interaction.channel.name.lower():
         is_ticket_channel = True
-        # Insertar registro retroactivo para consistencia
         await aexecute(
             """INSERT INTO tickets (id, guild_id, creator_id, channel_id, category, status, closed_by, created_at, updated_at)
                VALUES ($1,$2,$3,$4,'Soporte','closed',$5,NOW(),NOW())""",
@@ -196,7 +191,6 @@ async def execute_close_ticket(interaction: discord.Interaction):
         )
         return
 
-    # Modificar permisos del creador para que no escriba más
     if ticket and ticket.get("creator_id") and str(ticket["creator_id"]).isdigit():
         creator = interaction.guild.get_member(int(ticket["creator_id"]))
         if creator:
@@ -215,8 +209,8 @@ async def execute_close_ticket(interaction: discord.Interaction):
         "🔒 Ticket de Soporte Cerrado",
         f"Este ticket ha sido cerrado por {interaction.user.mention}.\n\nPuedes eliminar el canal inmediatamente usando el botón inferior o dejarlo archivado."
     )
-    close_embed.set_footer(text="NYC RP • Soporte")
-    
+    close_embed.set_footer(text="NYSRP • Soporte")
+
     view = TicketAfterCloseActions()
     await interaction.followup.send(embed=close_embed, view=view)
 
@@ -242,8 +236,8 @@ class Tickets(commands.Cog, name="Tickets"):
         categoria: discord.CategoryChannel = None,
         rol_soporte: discord.Role = None,
         titulo: str = "🎫 Centro de Atención & Soporte",
-        descripcion: str = "Presiona el botón **'Abrir Ticket'** para comunicarte de forma privada con el equipo de Staff de **Miami Vice**.\n\nAl presionar el botón se abrirá un formulario donde deberás indicar qué necesitas y el motivo de tu solicitud."
-    ):
+        descripcion: str = "Presiona el botón **'Abrir Ticket'** para comunicarte de forma privada con el equipo de Staff de **NYSRP**.\n\nAl presionar el botón se abrirá un formulario donde deberás indicar qué necesitas y el motivo de tu solicitud."
+    ) :
         await interaction.response.defer(ephemeral=True)
         if not await check_admin_permission(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Necesitas permisos de administrador"), ephemeral=True)
@@ -252,7 +246,6 @@ class Tickets(commands.Cog, name="Tickets"):
         gid = str(interaction.guild_id)
         target_channel = canal or interaction.channel
 
-        # Actualizar configuración de tickets
         cat_id = str(categoria.id) if categoria else None
         role_id = str(rol_soporte.id) if rol_soporte else None
 
@@ -286,7 +279,7 @@ class Tickets(commands.Cog, name="Tickets"):
         view = TicketOpenButton()
         await target_channel.send(embed=e, view=view)
         await interaction.followup.send(
-            embed=success_embed("Panel de Tickets Publicado", f"El panel de tickets se ha publicado correctamente en {target_channel.mention}."),
+            embed=success_embed("Panel de Tickets Publicado", f"El panel la de tickets se ha publicado correctamente en {target_channel.mention}."),
             ephemeral=True
         )
 

@@ -80,9 +80,7 @@ class VoteView(discord.ui.View):
             await interaction.followup.send("⏳ La votación aún se está registrando, intenta de nuevo en un momento.", ephemeral=True)
             return
 
-        # Registrar o actualizar voto (1 voto por usuario)
         await record_user_vote(vote_id, uid, choice)
-        # Si el usuario había retirado su voto antes, ya cuenta como votante activo nuevamente
         res = await get_vote_results(vote_id)
 
         await self._refresh_live_embed(interaction, res)
@@ -184,7 +182,7 @@ class VoteView(discord.ui.View):
                 inline=False
             )
 
-        embed.set_footer(text="NYC RP • Votación Oficial de Apertura")
+        embed.set_footer(text="NYSRP • Votación Oficial de Apertura")
         embed.timestamp = discord.utils.utcnow()
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -203,7 +201,7 @@ class VoteView(discord.ui.View):
         embed = discord.Embed(
             title="🗳️ Votación de Apertura",
             description=(
-                "> ¿Deseas que **Miami Vice Roleplay** abra sus operaciones?\n\n"
+                "> ¿Deseas que **New York State Roleplay Spanish** abra sus operaciones?\n\n"
                 "🟢 **Sí — Abrir servidor**\n"
                 "🔴 **No — Mantener cerrado**\n\n"
                 "> ✅ **Usa los botones de abajo para votar.**\n\n"
@@ -230,7 +228,7 @@ class VoteView(discord.ui.View):
             )
 
         embed.set_footer(
-            text="NYC RP • Votación Oficial de Apertura",
+            text="NYSRP • Votación Oficial de Apertura",
             icon_url=guild.icon.url if guild and guild.icon else None
         )
         embed.timestamp = discord.utils.utcnow()
@@ -250,7 +248,7 @@ class VoteView(discord.ui.View):
 
 
 class ServerControl(commands.Cog, name="Control de Servidor"):
-    """Comandos y módulos de estado, apertura, cierre y votación de Miami Vice Roleplay."""
+    """Comandos y módulos de estado, apertura, cierre y votación de NYSRP."""
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -260,9 +258,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
     def cog_unload(self):
         self.check_expired_votes.cancel()
 
-    # -------------------------------------------------------------------------
-    # Registro de vistas persistentes de votación (sobreviven a reinicios)
-    # -------------------------------------------------------------------------
     @commands.Cog.listener()
     async def on_ready(self):
         try:
@@ -284,9 +279,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         except Exception as e:
             logger.error(f"Error registrando vistas de votación persistentes: {e}", exc_info=True)
 
-    # -------------------------------------------------------------------------
-    # Tarea periódica para finalizar votaciones automáticamente
-    # -------------------------------------------------------------------------
     @tasks.loop(seconds=10)
     async def check_expired_votes(self):
         try:
@@ -315,21 +307,20 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         message_id = vote_data["message_id"]
 
         results = await close_server_vote(vote_id)
-        
+
         guild = self.bot.get_guild(int(guild_id))
         if not guild:
             return
-        
+
         channel = guild.get_channel(int(channel_id))
         if not channel:
             return
 
-        # Construir Embed de resultados oficiales
         voters_info = await get_vote_voters(vote_id)
 
         embed = discord.Embed(
             title="📊 Resultado de la votación",
-            description="La votación oficial para la apertura de **NYC Roleplay** ha concluido.",
+            description="La votación oficial para la apertura de **NYSRP** ha concluido.",
             color=COLOR_SUCCESS if results["winner"] == "yes" else (COLOR_ERROR if results["winner"] == "no" else COLOR_WARNING)
         )
         embed.add_field(name="🟢 A favor", value=f"**{results['yes']}**", inline=True)
@@ -353,21 +344,17 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             verdict = "⚖️ **Empate:** La votación finalizó en empate. La decisión final queda a criterio del Staff."
 
         embed.add_field(name="📋 Veredicto", value=verdict, inline=False)
-        embed.set_footer(text="NYC RP • Sistema Oficial de Apertura y Cierre", icon_url=guild.icon.url if guild.icon else None)
+        embed.set_footer(text="NYSRP • Sistema Oficial de Apertura y Cierre", icon_url=guild.icon.url if guild.icon else None)
         embed.timestamp = discord.utils.utcnow()
 
         try:
-            # Enviar mensaje con el resultado final
             await channel.send(embed=embed)
-            
-            # Desactivar botones en el mensaje original si aún existe
             try:
                 orig_msg = await channel.fetch_message(int(message_id))
                 if orig_msg:
                     disabled_view = discord.ui.View()
                     disabled_view.add_item(discord.ui.Button(label=f"Sí ({results['yes']})", style=discord.ButtonStyle.success, emoji="🟢", disabled=True))
                     disabled_view.add_item(discord.ui.Button(label=f"No ({results['no']})", style=discord.ButtonStyle.danger, emoji="🔴", disabled=True))
-                    
                     orig_embed = orig_msg.embeds[0] if orig_msg.embeds else None
                     if orig_embed:
                         orig_embed.color = discord.Color.dark_gray()
@@ -378,10 +365,7 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         except Exception as e:
             logger.error(f"Error publicando resultado de votación {vote_id}: {e}")
 
-    # =========================================================================
-    # COMANDO 1: /abrir-servidor y /abrir servidor
-    # =========================================================================
-    abrir_group = app_commands.Group(name="abrir", description="Comandos de apertura para NYC RP")
+    abrir_group = app_commands.Group(name="abrir", description="Comandos de apertura para NYSRP")
 
     @abrir_group.command(
         name="servidor",
@@ -421,7 +405,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         gid = str(interaction.guild_id)
         target_channel = canal or interaction.channel
 
-        # Actualizar y persistir el estado a OPEN en la base de datos
         await set_server_status(
             guild_id=gid,
             status="OPEN",
@@ -429,7 +412,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             server_code=SERVER_CODE
         )
 
-        # Consultar la votación comunitaria (activa o la más reciente realizada)
         active_vote = await get_active_vote_by_guild(gid)
         target_vote = None
         if active_vote:
@@ -442,11 +424,10 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         if target_vote:
             voters_info = await get_vote_voters(target_vote["id"])
 
-        # Crear Embed con el diseño requerido
         embed = discord.Embed(
             title="🟢 SERVIDOR ABIERTO",
             description=(
-                "> **Miami Vice Roleplay está oficialmente abierto.**\n"
+                "> **New York State Roleplay Spanish está oficialmente abierto.**\n"
                 ">\n"
                 "> Ya puedes ingresar al servidor de Roleplay.\n"
                 ">\n"
@@ -462,7 +443,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         if anuncio_extra:
             embed.add_field(name="📢 Información Adicional", value=anuncio_extra, inline=False)
 
-        # Mostrar a las personas que votaron en el comando
         if voters_info and voters_info["total"] > 0:
             yes_mentions = _format_voters_display(voters_info["yes_voters"])
             no_mentions = _format_voters_display(voters_info["no_voters"])
@@ -491,7 +471,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         )
         embed.timestamp = discord.utils.utcnow()
 
-        # Publicar anuncio oficial
         await target_channel.send(content="@everyone" if interaction.guild else None, embed=embed)
 
         summary_voters = ""
@@ -503,9 +482,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             ephemeral=True
         )
 
-    # =========================================================================
-    # COMANDO 2: /cerrar-servidor
-    # =========================================================================
     @app_commands.command(
         name="cerrar-servidor",
         description="Cerrar oficialmente el servidor de Roleplay New York State Roleplay Spanish (NYSRP)"
@@ -528,7 +504,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         gid = str(interaction.guild_id)
         target_channel = canal or interaction.channel
 
-        # Actualizar y persistir el estado a CLOSED en la base de datos
         await set_server_status(
             guild_id=gid,
             status="CLOSED",
@@ -536,11 +511,10 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             server_code=SERVER_CODE
         )
 
-        # Crear Embed con el diseño requerido
         embed = discord.Embed(
             title="🔴 SERVIDOR CERRADO",
             description=(
-                "> **Miami Vice Roleplay ha cerrado operaciones.**\n"
+                "> **New York State Roleplay Spanish ha cerrado operaciones.**\n"
                 ">\n"
                 "> El servidor de Roleplay se encuentra actualmente cerrado y **no se puede ingresar al servidor**.\n"
                 ">\n"
@@ -563,7 +537,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         )
         embed.timestamp = discord.utils.utcnow()
 
-        # Publicar anuncio oficial
         await target_channel.send(content="@everyone" if interaction.guild else None, embed=embed)
 
         await interaction.followup.send(
@@ -571,9 +544,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             ephemeral=True
         )
 
-    # =========================================================================
-    # COMANDO 3: /votacion-servidor
-    # =========================================================================
     @app_commands.command(
         name="votacion-servidor",
         description="Iniciar una votación comunitaria para decidir si se abre el servidor de Roleplay"
@@ -601,11 +571,9 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         empty_results = {"yes": 0, "no": 0, "total": 0, "winner": "tie"}
         placeholder_vote = {"ends_at": ends_at}
 
-        # Enviar mensaje con botones interactivos (sin reacciones)
         dummy_vote_id = "pending"
         vote_view = VoteView(vote_id=dummy_vote_id, bot=self.bot)
 
-        # Crear Embed con el formato oficial (conteos en tiempo real y botones)
         embed = await vote_view._build_vote_embed(placeholder_vote, empty_results, interaction.guild)
 
         msg = await target_channel.send(
@@ -614,7 +582,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             view=vote_view
         )
 
-        # Crear registro en la base de datos
         vote_data = await create_server_vote(
             guild_id=gid,
             channel_id=str(target_channel.id),
@@ -623,10 +590,8 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             duration_minutes=dur
         )
 
-        # Vincular el ID real de la votación con la vista de botones
         vote_view.vote_id = vote_data["id"]
 
-        # Registrar la vista como persistente para que sobreviva a reinicios del bot
         try:
             self.bot.add_view(vote_view, message_id=msg.id)
             self._registered_view_messages.add(msg.id)
@@ -639,9 +604,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             ephemeral=True
         )
 
-    # =========================================================================
-    # COMANDO 4: /estado-servidor (Consulta de Estado)
-    # =========================================================================
     @app_commands.command(
         name="estado-servidor",
         description="Consultar el estado operativo actual de New York State Roleplay Spanish (NYSRP)"
@@ -657,7 +619,7 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             embed = discord.Embed(
                 title="🟢 ESTADO: SERVIDOR ABIERTO",
                 description=(
-                    "> **Miami Vice Roleplay está actualmente ABIERTO.**\n"
+                    "> **New York State Roleplay Spanish está actualmente ABIERTO.**\n"
                     ">\n"
                     f"> **Código oficial:** `{server_code}`\n"
                     "> ¡Puedes ingresar y rolear con la comunidad!"
@@ -670,7 +632,7 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
             embed = discord.Embed(
                 title="🔴 ESTADO: SERVIDOR CERRADO",
                 description=(
-                    "> **Miami Vice Roleplay se encuentra actualmente CERRADO.**\n"
+                    "> **New York State Roleplay Spanish se encuentra actualmente CERRADO.**\n"
                     ">\n"
                     "> **Acceso:** 🚫 No disponible.\n"
                     "> Por favor, mantente atento a los anuncios oficiales del Staff para la próxima apertura."
@@ -690,9 +652,6 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
         embed.timestamp = discord.utils.utcnow()
         await interaction.followup.send(embed=embed)
 
-    # =========================================================================
-    # COMANDO 5: /finalizar-votacion (Cierre Manual por Staff)
-    # =========================================================================
     @app_commands.command(
         name="finalizar-votacion",
         description="Finalizar manualmente la votación activa de apertura y publicar los resultados"
@@ -715,7 +674,7 @@ class ServerControl(commands.Cog, name="Control de Servidor"):
 
         await self._conclude_vote(active_vote)
         await interaction.followup.send(
-            "✅ La votación activa ha sido finalizada y los resultados han sido publicados.",
+            "✅ la votación activa ha sido finalizada y los resultados han sido publicados.",
             ephemeral=True
         )
 
