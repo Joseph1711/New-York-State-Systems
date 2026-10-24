@@ -15,7 +15,10 @@ import {
   Layers, 
   Trash2,
   RefreshCw,
-  Server
+  Server,
+  Sparkles,
+  Zap,
+  Check
 } from 'lucide-react';
 
 interface BotStatus {
@@ -44,6 +47,9 @@ export function BotManagerView() {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [filterStream, setFilterStream] = useState<'all' | 'stdout' | 'stderr' | 'system'>('all');
   const [autoScroll, setAutoScroll] = useState(true);
+  const [showCleanModal, setShowCleanModal] = useState(false);
+  const [wipeDbOption, setWipeDbOption] = useState(false);
+  const [cleanSuccessNotice, setCleanSuccessNotice] = useState<string | null>(null);
   const terminalEndRef = useRef<HTMLDivElement>(null);
 
   const fetchStatus = async () => {
@@ -92,11 +98,27 @@ export function BotManagerView() {
     }
   }, [logs, autoScroll]);
 
+  const [actionFeedback, setActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const showFeedback = (type: 'success' | 'error', message: string) => {
+    setActionFeedback({ type, message });
+    setTimeout(() => setActionFeedback(null), 5000);
+  };
+
   const handleStart = async () => {
     setLoadingAction('start');
     try {
-      await fetch('/api/bot/start', { method: 'POST' });
+      const res = await fetch('/api/bot/start', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success !== false) {
+        showFeedback('success', data.message || 'Orden de inicio enviada al bot.');
+      } else {
+        showFeedback('error', data.message || 'No se pudo iniciar el bot.');
+      }
       await fetchStatus();
+      fetchLogs(0);
+    } catch (err: any) {
+      showFeedback('error', `Error de red: ${err.message}`);
     } finally {
       setLoadingAction(null);
     }
@@ -105,8 +127,17 @@ export function BotManagerView() {
   const handleStop = async () => {
     setLoadingAction('stop');
     try {
-      await fetch('/api/bot/stop', { method: 'POST' });
+      const res = await fetch('/api/bot/stop', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success !== false) {
+        showFeedback('success', data.message || 'Bot detenido.');
+      } else {
+        showFeedback('error', data.message || 'No se pudo detener el bot.');
+      }
       await fetchStatus();
+      fetchLogs(0);
+    } catch (err: any) {
+      showFeedback('error', `Error de red: ${err.message}`);
     } finally {
       setLoadingAction(null);
     }
@@ -115,10 +146,42 @@ export function BotManagerView() {
   const handleRestart = async () => {
     setLoadingAction('restart');
     try {
-      await fetch('/api/bot/restart', { method: 'POST' });
+      const res = await fetch('/api/bot/restart', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success !== false) {
+        showFeedback('success', data.message || 'Bot reiniciado con éxito.');
+      } else {
+        showFeedback('error', data.message || 'No se pudo reiniciar el bot.');
+      }
       await fetchStatus();
+      fetchLogs(0);
+    } catch (err: any) {
+      showFeedback('error', `Error de red: ${err.message}`);
     } finally {
       setLoadingAction(null);
+    }
+  };
+
+  const handleCleanReset = async (wipeDb: boolean = false) => {
+    setLoadingAction('clean-reset');
+    try {
+      const res = await fetch('/api/bot/reset-clean', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wipeDb })
+      });
+      const data = await res.json();
+      setCleanSuccessNotice(data.message || 'Bot reiniciado limpiamente.');
+      setLogs([]);
+      setLastLogId(0);
+      await fetchStatus();
+      fetchLogs(0);
+      setTimeout(() => setCleanSuccessNotice(null), 6000);
+    } catch (err: any) {
+      console.error('Error during clean reset:', err);
+    } finally {
+      setLoadingAction(null);
+      setShowCleanModal(false);
     }
   };
 
@@ -159,7 +222,7 @@ export function BotManagerView() {
             <div>
               <div className="flex items-center gap-3">
                 <h2 className="text-xl font-bold text-white tracking-tight">
-                  Miami Vice RP — Proceso Discord Bot
+                  NYC RP — Proceso Discord Bot
                 </h2>
                 <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold flex items-center gap-1.5 ${
                   status?.status === 'online'
@@ -189,13 +252,24 @@ export function BotManagerView() {
             </button>
 
             <button
+              id="clean-reset-bot-btn"
+              onClick={() => setShowCleanModal(true)}
+              disabled={loadingAction !== null}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-semibold text-xs flex items-center gap-2 shadow-lg shadow-amber-600/25 border border-amber-400/40 transition-all cursor-pointer disabled:opacity-40"
+              title="Mata procesos anteriores, purga caché .pyc y levanta proceso limpio"
+            >
+              <Sparkles className={`w-4 h-4 text-amber-200 ${loadingAction === 'clean-reset' ? 'animate-spin' : ''}`} />
+              <span>{loadingAction === 'clean-reset' ? 'Limpiando y Reiniciando...' : 'Reiniciar Todo Limpio'}</span>
+            </button>
+
+            <button
               id="restart-bot-btn"
               onClick={handleRestart}
               disabled={loadingAction !== null}
               className="px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs flex items-center gap-2 border border-slate-700 transition-all cursor-pointer"
             >
               <RotateCw className={`w-4 h-4 ${loadingAction === 'restart' ? 'animate-spin text-cyan-400' : ''}`} />
-              <span>Reiniciar</span>
+              <span>Reiniciar Rápido</span>
             </button>
 
             <button
@@ -209,6 +283,32 @@ export function BotManagerView() {
             </button>
           </div>
         </div>
+
+        {/* Action Feedback Banner */}
+        {actionFeedback && (
+          <div className={`mt-4 p-3.5 rounded-xl border flex items-center gap-3 text-xs animate-in fade-in slide-in-from-top-2 ${
+            actionFeedback.type === 'success'
+              ? 'bg-emerald-950/80 border-emerald-500/50 text-emerald-300'
+              : 'bg-rose-950/80 border-rose-500/50 text-rose-300'
+          }`}>
+            {actionFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0" />
+            )}
+            <div className="flex-1 font-medium">{actionFeedback.message}</div>
+          </div>
+        )}
+
+        {/* Clean Reset Success Notification */}
+        {cleanSuccessNotice && (
+          <div className="mt-4 p-3.5 rounded-xl bg-emerald-950/80 border border-emerald-500/50 flex items-center gap-3 text-emerald-300 text-xs animate-in fade-in slide-in-from-top-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+            <div className="flex-1">
+              <span className="font-semibold">¡Reinicio Limpio Ejecutado!</span> {cleanSuccessNotice}
+            </div>
+          </div>
+        )}
 
         {/* Runtime Metrics Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-5 border-t border-slate-800/80">
@@ -296,7 +396,7 @@ export function BotManagerView() {
             <div className="flex rounded-lg bg-slate-950 p-0.5 border border-slate-800 text-[11px] font-mono">
               {(['all', 'stdout', 'stderr', 'system'] as const).map(f => (
                 <button
-                  key={f}
+                  key={`log-filter-btn-${f}`}
                   onClick={() => setFilterStream(f)}
                   className={`px-2 py-0.5 rounded capitalize transition-all ${
                     filterStream === f 
@@ -338,8 +438,8 @@ export function BotManagerView() {
               <p>No hay mensajes en el registro. Inicia el bot para ver la salida en tiempo real.</p>
             </div>
           ) : (
-            filteredLogs.map(l => (
-              <div key={l.id} className="flex items-start gap-2.5 hover:bg-slate-900/40 px-1 py-0.5 rounded transition-colors leading-relaxed">
+              filteredLogs.map((l, index) => (
+                <div key={`${l.id}-${index}`} className="flex items-start gap-2.5 hover:bg-slate-900/40 px-1 py-0.5 rounded transition-colors leading-relaxed">
                 <span className="text-slate-600 text-[10px] select-none shrink-0 pt-0.5">{l.time}</span>
                 <span className={`text-[10px] px-1 rounded uppercase font-bold select-none shrink-0 ${
                   l.stream === 'stdout' 
@@ -361,6 +461,81 @@ export function BotManagerView() {
           <div ref={terminalEndRef} />
         </div>
       </div>
+
+      {/* Clean Reset Confirmation Modal */}
+      {showCleanModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95">
+            <div className="flex items-start gap-4">
+              <div className="p-3 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                <Sparkles className="w-6 h-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-white">Reinicio Limpio Total del Bot</h3>
+                <p className="text-xs text-slate-400 mt-1">
+                  Esta acción reinicia el entorno del bot por completo para garantizar que todo el código modificado y corregido se cargue fresco sin residuos en memoria.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2 text-xs text-slate-300">
+              <div className="flex items-center gap-2 text-amber-300 font-semibold">
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>Termina procesos activos y huérfanos de Python</span>
+              </div>
+              <div className="flex items-center gap-2 text-amber-300 font-semibold">
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>Purga toda la caché de bytecode <code className="text-cyan-300 font-mono">__pycache__/*.pyc</code></span>
+              </div>
+              <div className="flex items-center gap-2 text-amber-300 font-semibold">
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>Limpia el buffer de logs de la consola en vivo</span>
+              </div>
+              <div className="flex items-center gap-2 text-amber-300 font-semibold">
+                <Check className="w-4 h-4 text-emerald-400" />
+                <span>Inicia un nuevo proceso <code className="text-cyan-300 font-mono">python3 main.py</code> limpio</span>
+              </div>
+            </div>
+
+            {/* Optional wipe database */}
+            <label className="flex items-start gap-3 p-3 rounded-xl bg-rose-950/20 border border-rose-800/40 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={wipeDbOption}
+                onChange={(e) => setWipeDbOption(e.target.checked)}
+                className="mt-0.5 rounded border-rose-700 text-rose-500 focus:ring-rose-500/20"
+              />
+              <div className="text-xs">
+                <span className="font-semibold text-rose-300">Vaciar y reconstruir base de datos SQLite local</span>
+                <p className="text-slate-400 mt-0.5 text-[11px]">
+                  Opcional: Si está marcado, elimina <code className="text-rose-300 font-mono">miami_vice.sqlite3</code> para crear todas las 38 tablas vacías desde cero.
+                </p>
+              </div>
+            </label>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCleanModal(false)}
+                disabled={loadingAction === 'clean-reset'}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium transition-all cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCleanReset(wipeDbOption)}
+                disabled={loadingAction === 'clean-reset'}
+                className="px-5 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-amber-600/30 transition-all cursor-pointer disabled:opacity-50"
+              >
+                <Sparkles className={`w-4 h-4 ${loadingAction === 'clean-reset' ? 'animate-spin' : ''}`} />
+                <span>{loadingAction === 'clean-reset' ? 'Limpiando y Reiniciando...' : 'Ejecutar Reinicio Limpio'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

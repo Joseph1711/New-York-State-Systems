@@ -1,9 +1,15 @@
 """
- Inicializa todas las tablas de la base de datos para Miami Vice Bot.
+ Inicializa todas las tablas de la base de datos para NYC Bot.
 Ejecutar una sola vez (o cuando se agreguen tablas nuevas).
 """
 import os
+import sys
 import logging
+
+# Ensure project root is in sys.path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if "." not in sys.path:
+    sys.path.insert(0, os.path.abspath("."))
 
 logger = logging.getLogger("bot")
 
@@ -25,6 +31,13 @@ CREATE TABLE IF NOT EXISTS users (
     last_daily TIMESTAMP,
     last_weekly TIMESTAMP,
     last_work TIMESTAMP,
+    username TEXT,
+    display_name TEXT,
+    profile_note TEXT DEFAULT 'Made By Joshi',
+    roblox_username TEXT,
+    roblox_id TEXT,
+    roblox_profile_url TEXT,
+    dni_number TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(discord_id, guild_id)
@@ -38,6 +51,12 @@ CREATE TABLE IF NOT EXISTS guild_config (
     tax_rate NUMERIC DEFAULT 5,
     xp_multiplier NUMERIC DEFAULT 1.0,
     log_channel_id TEXT,
+    admin_role_id TEXT,
+    work_logs_channel_id TEXT,
+    applications_channel_id TEXT,
+    single_public_job BOOLEAN DEFAULT TRUE,
+    public_jobs_channel_id TEXT,
+    company_creation_cost NUMERIC DEFAULT 5000,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
@@ -56,7 +75,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 -- =====================
--- JOBS
+-- JOBS (EMPLEOS PÚBLICOS ADMINISTRADOS POR EL SERVIDOR)
 -- =====================
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
@@ -67,8 +86,31 @@ CREATE TABLE IF NOT EXISTS jobs (
     cooldown_minutes INTEGER DEFAULT 60,
     emoji TEXT DEFAULT '💼',
     is_active BOOLEAN DEFAULT TRUE,
+    role_id TEXT,
+    description TEXT DEFAULT '',
+    salary NUMERIC DEFAULT 0,
+    requirements TEXT DEFAULT '',
+    is_single BOOLEAN DEFAULT TRUE,
+    max_workers INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Asignacion activa de un ciudadano a un empleo publico.
+CREATE TABLE IF NOT EXISTS user_public_jobs (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    job_name TEXT NOT NULL,
+    salary NUMERIC DEFAULT 0,
+    role_id TEXT,
+    status TEXT DEFAULT 'active',
+    hired_at TIMESTAMP DEFAULT NOW(),
+    last_paid_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(discord_id, guild_id, job_id)
 );
 
 -- =====================
@@ -119,6 +161,7 @@ CREATE TABLE IF NOT EXISTS auctions (
     guild_id TEXT NOT NULL,
     seller_id TEXT NOT NULL,
     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    quantity INTEGER DEFAULT 1,
     starting_bid NUMERIC NOT NULL,
     current_bid NUMERIC,
     current_bidder_id TEXT,
@@ -274,7 +317,7 @@ CREATE TABLE IF NOT EXISTS fleet_vehicles (
 );
 
 -- =====================
--- COMPANIES
+-- COMPANIES (EMPRESAS PRIVADAS)
 -- =====================
 CREATE TABLE IF NOT EXISTS companies (
     id TEXT PRIMARY KEY,
@@ -284,6 +327,16 @@ CREATE TABLE IF NOT EXISTS companies (
     description TEXT DEFAULT '',
     funds NUMERIC DEFAULT 0,
     tax_rate NUMERIC DEFAULT 5,
+    category TEXT DEFAULT 'General',
+    location TEXT DEFAULT '',
+    emoji TEXT DEFAULT '🏢',
+    status TEXT DEFAULT 'active',
+    status_note TEXT DEFAULT '',
+    status_changed_at TIMESTAMP,
+    sale_price NUMERIC,
+    public_listing BOOLEAN DEFAULT FALSE,
+    payroll_mode TEXT DEFAULT 'automatic',
+    allow_multiple_jobs BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(guild_id, name)
@@ -297,7 +350,162 @@ CREATE TABLE IF NOT EXISTS company_members (
     role TEXT DEFAULT 'Empleado',
     salary NUMERIC DEFAULT 0,
     joined_at TIMESTAMP DEFAULT NOW(),
+    position_id TEXT,
+    member_status TEXT DEFAULT 'active',
+    permissions TEXT DEFAULT '',
+    discord_role_id TEXT,
+    pending_salary NUMERIC DEFAULT 0,
+    last_paid_at TIMESTAMP,
+    is_manager BOOLEAN DEFAULT FALSE,
+    hired_by TEXT,
+    notes TEXT DEFAULT '',
+    updated_at TIMESTAMP DEFAULT NOW(),
     UNIQUE(company_id, discord_id)
+);
+
+-- Puestos de trabajo definidos por el propio dueno (sin lista fija).
+CREATE TABLE IF NOT EXISTS company_positions (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    guild_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    salary NUMERIC DEFAULT 0,
+    description TEXT DEFAULT '',
+    discord_role_id TEXT,
+    permissions TEXT DEFAULT '',
+    max_members INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Catalogo comercial: productos (kind='product') y servicios (kind='service').
+CREATE TABLE IF NOT EXISTS company_catalog (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    guild_id TEXT NOT NULL,
+    kind TEXT DEFAULT 'product',
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    price NUMERIC NOT NULL DEFAULT 0,
+    emoji TEXT DEFAULT '🍽️',
+    stock INTEGER DEFAULT -1,
+    role_id TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    sold_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(company_id, kind, name)
+);
+
+-- Libro mayor empresarial: cada movimiento con origen y saldo resultante.
+CREATE TABLE IF NOT EXISTS company_transactions (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    amount NUMERIC NOT NULL,
+    balance_after NUMERIC DEFAULT 0,
+    description TEXT DEFAULT '',
+    actor_id TEXT,
+    counterparty_id TEXT,
+    ref_id TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Acciones: configuracion de la sociedad por acciones.
+CREATE TABLE IF NOT EXISTS company_shares (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    guild_id TEXT NOT NULL,
+    total_shares INTEGER DEFAULT 0,
+    share_price NUMERIC DEFAULT 0,
+    control_pct NUMERIC DEFAULT 51,
+    is_enabled BOOLEAN DEFAULT FALSE,
+    buyback_price NUMERIC DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS company_shareholders (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    shares INTEGER DEFAULT 0,
+    total_invested NUMERIC DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(company_id, discord_id)
+);
+
+CREATE TABLE IF NOT EXISTS company_share_trades (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    trade_type TEXT DEFAULT 'buy',
+    shares INTEGER NOT NULL,
+    price NUMERIC NOT NULL,
+    total NUMERIC NOT NULL,
+    counterparty_id TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Anuncios de venta de empresa (y su posterior cierre).
+CREATE TABLE IF NOT EXISTS company_sales (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    guild_id TEXT NOT NULL,
+    seller_id TEXT NOT NULL,
+    buyer_id TEXT,
+    price NUMERIC NOT NULL DEFAULT 0,
+    status TEXT DEFAULT 'listed',
+    note TEXT DEFAULT '',
+    listed_at TIMESTAMP DEFAULT NOW(),
+    sold_at TIMESTAMP
+);
+
+-- Repartos de dividendos-approved por el dueno, pagados desde fondos reales.
+CREATE TABLE IF NOT EXISTS company_dividends (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    guild_id TEXT NOT NULL,
+    total_amount NUMERIC NOT NULL DEFAULT 0,
+    paid_amount NUMERIC DEFAULT 0,
+    recipient_count INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending',
+    note TEXT DEFAULT '',
+    created_by TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    paid_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS company_dividend_payments (
+    id TEXT PRIMARY KEY,
+    dividend_id TEXT NOT NULL REFERENCES company_dividends(id) ON DELETE CASCADE,
+    company_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    shares INTEGER DEFAULT 0,
+    amount NUMERIC DEFAULT 0,
+    status TEXT DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Liquidaciones de nomina ejecuta por el dueno.
+CREATE TABLE IF NOT EXISTS company_payroll_runs (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    guild_id TEXT NOT NULL,
+    total NUMERIC DEFAULT 0,
+    employee_count INTEGER DEFAULT 0,
+    mode TEXT DEFAULT 'full',
+    status TEXT DEFAULT 'completed',
+    detail TEXT DEFAULT '',
+    created_by TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- =====================
@@ -312,9 +520,14 @@ CREATE TABLE IF NOT EXISTS properties (
     rent_price NUMERIC,
     status TEXT DEFAULT 'available',
     owner_id TEXT,
+    -- Empresa a la que pertenece el local. NULL = local de un ciudadano o del
+    -- mercado. Al disolver la empresa el local vuelve al mercado.
+    company_id TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_properties_company ON properties(company_id, status);
 
 CREATE TABLE IF NOT EXISTS property_transactions (
     id TEXT PRIMARY KEY,
@@ -480,6 +693,276 @@ CREATE TABLE IF NOT EXISTS criminal_missions (
 );
 
 -- =====================
+-- WORK SUBMISSIONS & EVIDENCE (TRABAJOS SECUNDARIOS)
+-- =====================
+CREATE TABLE IF NOT EXISTS work_submissions (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    job_type TEXT NOT NULL,
+    description TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    hours_or_shifts TEXT DEFAULT '1',
+    status TEXT DEFAULT 'pending',
+    reward_amount NUMERIC DEFAULT 0,
+    reward_xp INTEGER DEFAULT 0,
+    reviewer_id TEXT,
+    review_notes TEXT DEFAULT '',
+    created_at TIMESTAMP DEFAULT NOW(),
+    reviewed_at TIMESTAMP
+);
+
+-- =====================
+-- DNI / IDENTIDAD CIUDADANA & ROBLOX
+-- =====================
+CREATE TABLE IF NOT EXISTS dni_records (
+    id TEXT PRIMARY KEY,
+    discord_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    dni_number TEXT UNIQUE NOT NULL,
+    full_name TEXT NOT NULL,
+    birth_date TEXT,
+    age INTEGER DEFAULT 18,
+    gender TEXT DEFAULT 'No especificado',
+    nationality TEXT DEFAULT 'Estadounidense',
+    occupation TEXT DEFAULT 'Ciudadano',
+    roblox_username TEXT,
+    roblox_id TEXT,
+    roblox_profile_url TEXT,
+    blood_type TEXT DEFAULT 'O+',
+    avatar_url TEXT,
+    status TEXT DEFAULT 'active',
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(discord_id, guild_id)
+);
+
+-- =====================
+-- REGISTRO DE ARMAS & SERIES ÚNICAS
+-- =====================
+CREATE TABLE IF NOT EXISTS weapon_registries (
+    id TEXT PRIMARY KEY,
+    discord_id TEXT NOT NULL,
+    guild_id TEXT NOT NULL,
+    serial_number TEXT UNIQUE NOT NULL,
+    weapon_name TEXT NOT NULL,
+    weapon_type TEXT DEFAULT 'Arma de Fuego',
+    caliber TEXT DEFAULT '9mm',
+    license_type TEXT DEFAULT 'Defensa Personal',
+    status TEXT DEFAULT 'registered',
+    dni_number TEXT,
+    roblox_username TEXT,
+    notes TEXT DEFAULT '',
+    registered_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
+-- BOT UPDATES & ANNOUNCEMENTS
+-- =====================
+CREATE TABLE IF NOT EXISTS bot_updates_config (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT UNIQUE NOT NULL,
+    channel_id TEXT,
+    github_repo TEXT DEFAULT 'Joseph1711/miami-vice-rp',
+    auto_github_enabled BOOLEAN DEFAULT TRUE,
+    last_commit_sha TEXT,
+    draft_version TEXT DEFAULT 'v1.4.0',
+    draft_changes TEXT,
+    draft_description TEXT,
+    draft_date TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS bot_updates_history (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    title TEXT NOT NULL,
+    raw_message TEXT NOT NULL,
+    changes TEXT NOT NULL,
+    source TEXT DEFAULT 'manual',
+    commit_sha TEXT,
+    channel_id TEXT,
+    message_id TEXT,
+    published_by TEXT,
+    published_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
+-- VEHICLE & TRAILER & ATV REGISTRIES
+-- =====================
+CREATE TABLE IF NOT EXISTS vehicle_registries (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    dni_id TEXT,
+    dni_number TEXT,
+    vehicle_type TEXT NOT NULL,
+    brand_model TEXT NOT NULL,
+    color TEXT NOT NULL,
+    plate TEXT UNIQUE NOT NULL,
+    vin_number TEXT UNIQUE NOT NULL,
+    status TEXT DEFAULT 'active',
+    registration_fee NUMERIC DEFAULT 500,
+    insurance_status TEXT DEFAULT 'basic',
+    notes TEXT,
+    impound_reason TEXT,
+    impound_fine NUMERIC DEFAULT 0,
+    registered_at TIMESTAMP DEFAULT NOW(),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
+-- POLICE BOLO (BE ON THE LOOKOUT)
+-- =====================
+CREATE TABLE IF NOT EXISTS police_bolos (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    bolo_code TEXT UNIQUE NOT NULL,
+    target_type TEXT NOT NULL,
+    target_name TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    danger_level TEXT DEFAULT 'media',
+    reward NUMERIC DEFAULT 0,
+    image_url TEXT,
+    status TEXT DEFAULT 'active',
+    officer_id TEXT NOT NULL,
+    officer_name TEXT,
+    resolution_notes TEXT,
+    resolved_by TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
+-- POLICE & JUSTICE CASES (EXPEDIENTES)
+-- =====================
+CREATE TABLE IF NOT EXISTS police_cases (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    case_number TEXT UNIQUE NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    priority TEXT DEFAULT 'media',
+    description TEXT NOT NULL,
+    lead_detective_id TEXT NOT NULL,
+    lead_detective_name TEXT,
+    status TEXT DEFAULT 'abierto',
+    suspects_json TEXT DEFAULT '[]',
+    evidence_json TEXT DEFAULT '[]',
+    notes_json TEXT DEFAULT '[]',
+    verdict TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
+-- POLICE INCIDENTS & 911 DISPATCH (DESPACHO DE EMERGENCIAS)
+-- =====================
+CREATE TABLE IF NOT EXISTS police_incidents (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    incident_code TEXT UNIQUE NOT NULL,
+    incident_type TEXT NOT NULL,
+    location TEXT NOT NULL,
+    description TEXT NOT NULL,
+    priority_code TEXT DEFAULT 'codigo_2',
+    caller_id TEXT,
+    caller_name TEXT,
+    assigned_units TEXT,
+    status TEXT DEFAULT 'activo',
+    resolution_report TEXT,
+    closed_by TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
+-- SERVER CONTROL & VOTES
+-- =====================
+CREATE TABLE IF NOT EXISTS server_status (
+    guild_id TEXT PRIMARY KEY,
+    status TEXT DEFAULT 'CLOSED',
+    server_code TEXT DEFAULT 'MVERP',
+    updated_by TEXT,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS server_votes (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    creator_id TEXT NOT NULL,
+    status TEXT DEFAULT 'active',
+    duration_minutes INTEGER DEFAULT 5,
+    ends_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS server_user_votes (
+    id TEXT PRIMARY KEY,
+    vote_id TEXT NOT NULL REFERENCES server_votes(id) ON DELETE CASCADE,
+    discord_id TEXT NOT NULL,
+    choice TEXT NOT NULL,
+    voted_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(vote_id, discord_id)
+);
+
+CREATE TABLE IF NOT EXISTS server_vote_entries (
+    vote_id TEXT NOT NULL REFERENCES server_votes(id) ON DELETE CASCADE,
+    discord_id TEXT NOT NULL,
+    choice TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (vote_id, discord_id)
+);
+
+CREATE TABLE IF NOT EXISTS server_vote_removals (
+    id TEXT PRIMARY KEY,
+    vote_id TEXT NOT NULL REFERENCES server_votes(id) ON DELETE CASCADE,
+    discord_id TEXT NOT NULL,
+    removed_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
+-- POLICE CRIMINAL RECORDS & CITATIONS
+-- =====================
+CREATE TABLE IF NOT EXISTS criminal_records (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    crime_type TEXT NOT NULL,
+    description TEXT NOT NULL,
+    fine_amount NUMERIC DEFAULT 0,
+    jail_time_minutes INTEGER DEFAULT 0,
+    officer_id TEXT NOT NULL,
+    officer_name TEXT,
+    status TEXT DEFAULT 'arrested',
+    paid BOOLEAN DEFAULT FALSE,
+    paid_at TIMESTAMP,
+    items_found TEXT,
+    items_seized TEXT,
+    rights_read BOOLEAN DEFAULT TRUE,
+    physical_state TEXT DEFAULT 'Ileso',
+    evidence_url TEXT,
+    roblox_username TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS guild_configs (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT UNIQUE NOT NULL,
+    police_role_ids TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
 -- DB INITIALIZATION STATE
 -- =====================
 CREATE TABLE IF NOT EXISTS db_state (
@@ -488,26 +971,19 @@ CREATE TABLE IF NOT EXISTS db_state (
     initialized_at TIMESTAMP DEFAULT NOW(),
     table_count INTEGER DEFAULT 0
 );
+
 """
 
 def _check_tables_exist():
     """Verifica si las tablas ya existen sin intentar crearlas."""
-    from bot.db import execute, USE_POSTGRES
+    from bot.db import execute
     
     try:
-        if USE_POSTGRES:
-            result = execute(
-                """SELECT COUNT(*) as count FROM information_schema.tables 
-                   WHERE table_schema = 'public'""",
-                fetch="one"
-            )
-        else:
-            result = execute(
-                """SELECT COUNT(*) as count FROM sqlite_master 
-                   WHERE type='table' AND name NOT LIKE 'sqlite_%'""",
-                fetch="one"
-            )
-        
+        result = execute(
+            """SELECT COUNT(*) as count FROM information_schema.tables 
+               WHERE table_schema = 'public'""",
+            fetch="one"
+        )
         count = result.get("count", 0) if result else 0
         return count > 5  # Si hay más de 5 tablas, asumimos que ya está inicializado
     except Exception as e:
@@ -516,39 +992,50 @@ def _check_tables_exist():
 
 
 def _ensure_profile_note():
-    from bot.db import USE_POSTGRES, execute
+    from bot.db import execute, is_postgres
+    cols = [
+        ("users", "profile_note", "TEXT DEFAULT 'Made By Joshi'"),
+        ("users", "last_salary", "TIMESTAMP"),
+        ("guild_config", "admin_role_id", "TEXT"),
+        ("guild_config", "work_logs_channel_id", "TEXT"),
+        ("guild_config", "applications_channel_id", "TEXT")
+    ]
+    if is_postgres():
+        for tbl, col, ctype in cols:
+            try:
+                execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} {ctype}")
+            except Exception:
+                pass
+    else:
+        for tbl, col, ctype in cols:
+            try:
+                info = execute(f"PRAGMA table_info({tbl})", fetch="all") or []
+                existing = {r["name"] for r in info if "name" in r}
+                if col not in existing:
+                    execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {ctype}")
+            except Exception:
+                pass
     try:
-        if USE_POSTGRES:
-            execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_note TEXT DEFAULT 'Made By Joseph'")
-        else:
-            columns = execute("PRAGMA table_info(users)", fetch="all") or []
-            if not any(column.get("name") == "profile_note" for column in columns):
-                execute("ALTER TABLE users ADD COLUMN profile_note TEXT DEFAULT 'Made By Joseph'")
-        execute("UPDATE users SET profile_note=COALESCE(profile_note, 'Made By Joseph') WHERE profile_note IS NULL")
-    except Exception as e:
-        logger.warning(f"Error al agregar profile_note: {e}")
+        execute("UPDATE users SET profile_note='Made By Joshi' WHERE profile_note IS NULL OR profile_note='Made By Joseph'")
+    except Exception:
+        pass
 
 
 def init_db():
-    """Inicializa la BD solo si no está ya configurada."""
+    """Inicializa y verifica todas las tablas de la base de datos."""
     from bot.db import check_connection, initialize_schema
     
     result = check_connection()
     if not result["ok"]:
         raise RuntimeError(f"No se puede conectar a la base de datos: {result['error']}")
     
-    # Verificar si ya está inicializado
-    if _check_tables_exist():
-        logger.info("✅ Base de datos ya está inicializada. Omitiendo creación de tablas.")
-        return
-    
     try:
-        logger.info("🔧 Creando tablas de la base de datos...")
+        logger.info("🔧 Verificando / creando tablas en la base de datos...")
         initialize_schema(SCHEMA)
         _ensure_profile_note()
-        logger.info("✅ Base de datos inicializada correctamente.")
+        logger.info("✅ Base de datos lista y sincronizada (tablas completas disponibles).")
     except Exception as e:
-        logger.error(f"❌ Error al crear tablas: {e}")
+        logger.error(f"❌ Error al verificar/crear tablas: {e}")
         raise
 
 if __name__ == "__main__":

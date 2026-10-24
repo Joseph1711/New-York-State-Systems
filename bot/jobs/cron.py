@@ -1,10 +1,10 @@
-import asyncio
 import logging
 import datetime
 import random
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from bot.db import aexecute
 from bot.helpers import generate_id
+from bot.services.business import accrue_salary
 
 logger = logging.getLogger("bot")
 
@@ -158,15 +158,19 @@ def setup_jobs(bot):
                        VALUES ($1,$2,$3,'department_salary',$4,'Salario departamento',NOW())""",
                     (generate_id(), m["discord_id"], m["guild_id"], m["salary"])
                 )
+            # Solo las empresas heredadas con `payroll_mode='automatic'` cobran solas.
+            # Las del modulo de negocios usan nomina MANUAL: su dueno la ejecuta
+            # desde `/empresa nomina` con la caja real, y el cron no las toca.
             company_members = await aexecute(
                 """SELECT cm.*, c.funds, c.guild_id FROM company_members cm
                    JOIN companies c ON c.id=cm.company_id
-                   WHERE cm.salary > 0 AND c.funds >= cm.salary""",
+                   WHERE cm.salary > 0 AND c.funds >= cm.salary
+                     AND c.payroll_mode = 'automatic' AND cm.member_status = 'active'""",
                 fetch="all"
             ) or []
             for m in company_members:
                 await aexecute(
-                    "UPDATE companies SET funds=funds-$1, updated_at=NOW() WHERE id=$2",
+                    "UPDATE companies SET funds=funds-$1, updated_at=NOW() WHERE id=$2 AND funds >= $1",
                     (m["salary"], m["company_id"])
                 )
                 await aexecute(
@@ -178,9 +182,30 @@ def setup_jobs(bot):
                        VALUES ($1,$2,$3,'company_salary',$4,'Salario empresa',NOW())""",
                     (generate_id(), m["discord_id"], m["guild_id"], m["salary"])
                 )
+
+            # Las empresas con nomina manual acumulan la deuda diaria de sus
+            # empleados; el pago lo decide el dueno. Aqui solo se anota la deuda.
+            await accrue_all_manual_salaries()
+
             logger.info(f"Paid {len(dept_members)} dept + {len(company_members)} company salaries")
         except Exception as e:
             logger.error(f"Salary job error: {e}")
+
+    async def accrue_all_manual_salaries():
+        """Genera la nomina pendiente de toda empresa con nomina manual."""
+        try:
+            companies = await aexecute(
+                "SELECT id, guild_id FROM companies WHERE payroll_mode='manual'",
+                fetch="all"
+            ) or []
+            touched = 0
+            for company in companies:
+                touched += await accrue_salary(company["id"], days=1)
+            if touched:
+                logger.info("[Cron] Nomina pendiente generada en %d empresa(s) (%d empleados)",
+                            len(companies), touched)
+        except Exception as e:
+            logger.error(f"[Cron] Error acumulando nomina manual: {e}")
 
     @scheduler.scheduled_job("cron", hour=6, minute=0)
     async def apply_savings_interest():
@@ -215,6 +240,91 @@ def setup_jobs(bot):
             )
         except Exception as e:
             logger.error(f"Vehicle repair job error: {e}")
+
+    @scheduler.scheduled_job("interval", minutes=15)
+    async def check_github_updates_job():
+        try:
+            from bot.services.updates import (
+                fetch_github_commits,
+                is_commit_already_published,
+                record_published_update,
+                build_announcement_text,
+                DEFAULT_REPO
+            )
+            
+            configs = await aexecute(
+                "SELECT * FROM update_config WHERE auto_announce=TRUE AND channel_id IS NOT NULL",
+                fetch="all"
+            ) or []
+            
+            if not configs:
+                return
+
+            # Group by repo to minimize GitHub API calls
+            repo_cache = {}
+            for conf in configs:
+                gid = conf["guild_id"]
+                cid = conf["channel_id"]
+                repo = conf.get("github_repo") or DEFAULT_REPO
+
+                if repo not in repo_cache:
+                    repo_cache[repo] = await fetch_github_commits(repo, limit=3)
+                
+                commits = repo_cache.get(repo) or []
+                if not commits:
+                    continue
+
+                latest_commit = commits[0]
+                latest_sha = latest_commit["sha"]
+                short_sha = latest_commit["short_sha"]
+
+                # Check if this commit was already published in this guild
+                if await is_commit_already_published(gid, latest_sha) or await is_commit_already_published(gid, short_sha):
+                    continue
+
+                # Also avoid posting if last_commit_sha is already set to this
+                if conf.get("last_commit_sha") == latest_sha:
+                    continue
+
+                channel = bot.get_channel(int(cid))
+                if not channel:
+                    try:
+                        channel = await bot.fetch_channel(int(cid))
+                    except Exception:
+                        continue
+
+                if not channel:
+                    continue
+
+                version_name = f"Build {short_sha}"
+                changes_list = [f"• {c['clean_message']}" for c in commits]
+
+                announcement = build_announcement_text(
+                    version=version_name,
+                    changes=changes_list,
+                    description="Actualización detectada automáticamente desde GitHub",
+                    commit_sha=latest_sha
+                )
+
+                mention_text = f"<@&{conf['mention_role_id']}> 🚨 **NUEVA ACTUALIZACIÓN**" if conf.get("mention_role_id") else None
+
+                sent_msg = await channel.send(content=mention_text, embed=announcement["embed"])
+
+                await record_published_update(
+                    guild_id=gid,
+                    version=version_name,
+                    title=announcement["title"],
+                    changes=changes_list,
+                    description="Detección automática GitHub",
+                    commit_sha=latest_sha,
+                    source="github",
+                    published_by="GitHub Automation",
+                    channel_id=str(channel.id),
+                    message_id=str(sent_msg.id)
+                )
+                logger.info(f"[Updates] Auto-anuncio de commit {short_sha} publicado en guild {gid} (canal {cid})")
+        except Exception as e:
+            logger.error(f"[Updates] Error en job de detección de GitHub: {e}", exc_info=True)
 
     scheduler.start()
     logger.info("Cron jobs started")

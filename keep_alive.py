@@ -1,13 +1,17 @@
-import asyncio
+import os
+import sys
 import json
 import logging
 import threading
 import time
-from flask import Flask, jsonify, request
+import asyncio
+import subprocess
+from pathlib import Path
+from flask import Flask, jsonify, request, send_from_directory, render_template_string
 
-from bot.db import execute
+from bot.db import execute, check_connection, DB_PATH
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="dist", static_url_path="")
 _bot_ref = None
 _bot_loop = None
 _bot_task = None
@@ -17,6 +21,8 @@ _bot_configurator = None
 _bot_enabled = True
 _control_lock = None
 logger = logging.getLogger("dashboard")
+
+DIST_DIR = Path(__file__).resolve().parent / "dist"
 
 COMMAND_GROUPS = {
     "Economía": ["/balance", "/diario", "/semanal", "/trabajar", "/pagar", "/tabla", "/donar"],
@@ -55,34 +61,60 @@ async def _start_bot_from_dashboard():
         _control_lock = asyncio.Lock()
     async with _control_lock:
         _bot_enabled = True
-        if not _bot_ref or not _bot_token:
+        token = _bot_token or os.environ.get("DISCORD_TOKEN")
+        if not token:
             return {"ok": False, "message": "El bot no tiene DISCORD_TOKEN configurado."}
         if _bot_task and not _bot_task.done():
             return {"ok": True, "message": "El bot ya está encendido o conectándose."}
+        
+        # Siempre crear una instancia nueva y limpia al encender desde el panel
         if _bot_factory:
             _bot_ref = _bot_factory()
             if _bot_configurator:
-                _bot_configurator(_bot_ref)
-        task = asyncio.create_task(_bot_ref.start(_bot_token))
+                try:
+                    _bot_configurator(_bot_ref)
+                except Exception as conf_err:
+                    logger.warning("Configurator warning: %s", conf_err)
+        elif _bot_ref is None or getattr(_bot_ref, "is_closed", lambda: False)():
+            try:
+                from main import NYCRoleplayBot, configure_bot
+                _bot_ref = NYCRoleplayBot()
+                configure_bot(_bot_ref)
+            except Exception as e:
+                logger.error("Error creating bot instance: %s", e)
+
+        if not _bot_ref:
+            return {"ok": False, "message": "No se pudo instanciar el cliente de Discord."}
+
+        task = asyncio.create_task(_bot_ref.start(token))
         task.add_done_callback(_log_finished_task)
         set_bot_task(task)
+        logger.info("Bot iniciado manualmente desde el panel de control.")
         return {"ok": True, "message": "Orden de encendido enviada."}
 
 
 async def _stop_bot_from_dashboard():
-    global _bot_enabled, _control_lock
+    global _bot_enabled, _control_lock, _bot_ref, _bot_task
     if _control_lock is None:
         _control_lock = asyncio.Lock()
     async with _control_lock:
         _bot_enabled = False
-        if _bot_ref and _bot_task and not _bot_task.done():
-            await _bot_ref.close()
-            return {"ok": True, "message": "Bot desconectado correctamente."}
-        return {"ok": True, "message": "El bot ya estaba apagado."}
+        if _bot_ref and not getattr(_bot_ref, "is_closed", lambda: True)():
+            try:
+                await _bot_ref.close()
+            except Exception as close_err:
+                logger.warning("Error closing bot client: %s", close_err)
+        if _bot_task and not _bot_task.done():
+            _bot_task.cancel()
+        _bot_ref = None
+        _bot_task = None
+        logger.info("Bot detenido manualmente desde el panel de control.")
+        return {"ok": True, "message": "Bot desconectado correctamente."}
 
 
 def _control_bot(action):
     if _bot_loop is None or _bot_loop.is_closed():
+        logger.warning("Loop no disponible en _control_bot")
         return {"ok": False, "message": "El ciclo de control del bot no está disponible."}
     coroutine = (
         _start_bot_from_dashboard()
@@ -90,10 +122,11 @@ def _control_bot(action):
         else _stop_bot_from_dashboard()
     )
     try:
-        return asyncio.run_coroutine_threadsafe(coroutine, _bot_loop).result(timeout=10)
+        future = asyncio.run_coroutine_threadsafe(coroutine, _bot_loop)
+        return future.result(timeout=12)
     except Exception as error:
         logger.error("Error controlando el bot desde el panel: %s", error)
-        return {"ok": False, "message": "No se pudo ejecutar la orden del bot."}
+        return {"ok": False, "message": f"Error ejecutando orden: {error}"}
 
 
 def format_uptime(seconds):
@@ -107,7 +140,6 @@ def format_uptime(seconds):
 
 
 def _server_data():
-    """Read public server information for the dashboard without exposing player data."""
     departments = _safe_query(
         "SELECT id, name, acronym, description FROM departments ORDER BY name"
     )
@@ -191,129 +223,392 @@ def _bot_stats():
     }
 
 
-PAGE = """<!DOCTYPE html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Miami Vice • Central</title>
-  <style>
-    :root { --bg:#09051c; --panel:#121027e8; --cyan:#00e5ff; --pink:#ff2d95; --gold:#ffd166; --muted:#b9b2d6; }
-    * { box-sizing:border-box; } body { margin:0; min-height:100vh; color:#f5f3ff; font-family:Inter,system-ui,sans-serif; background:radial-gradient(circle at 80% 5%,#ff2d9533,transparent 27%),linear-gradient(135deg,var(--bg),#17102f 60%,#2b0b35); }
-    .shell { width:min(1080px,100%); margin:auto; padding:36px 20px 56px; } .top { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; }
-    .eyebrow { color:var(--pink); font-size:.72rem; letter-spacing:.22em; font-weight:800; text-transform:uppercase; } h1 { color:var(--cyan); font-size:clamp(2.5rem,7vw,5rem); line-height:.9; margin:12px 0 15px; text-shadow:0 0 22px #00e5ff66; }
-    .intro { color:var(--muted); max-width:650px; line-height:1.6; font-size:1.05rem; margin:0; } .badge { color:var(--cyan); border:1px solid #00e5ff66; border-radius:99px; padding:10px 14px; font-size:.75rem; font-weight:800; white-space:nowrap; }
-     .stats { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin:30px 0 18px; } .card { background:var(--panel); border:1px solid #00e5ff2e; border-radius:18px; padding:20px; box-shadow:0 12px 40px #0003; }
-    .label { color:var(--muted); font-size:.68rem; letter-spacing:.14em; text-transform:uppercase; } .value { font-size:1.65rem; font-weight:850; margin-top:8px; }
-    .tabs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:15px; } button { color:var(--muted); background:#121027cc; border:1px solid #ffffff1c; border-radius:99px; cursor:pointer; padding:10px 14px; font:inherit; font-size:.82rem; } button.active,button:hover { color:var(--bg); background:var(--cyan); border-color:var(--cyan); }
-     .panel { display:none; } .panel.active { display:block; } .command-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; } .command-card { background:#12102799; border:1px solid #ff2d9533; border-radius:14px; padding:17px; }
-    .command-card h3 { color:var(--gold); font-size:.95rem; margin:0 0 11px; } .command { display:block; color:#f5f3ff; background:#09051c; border-radius:8px; margin:6px 0; padding:8px 10px; font: .78rem ui-monospace,monospace; }
-    .agency { margin-bottom:14px; } .agency-head { display:flex; align-items:center; justify-content:space-between; gap:12px; } .agency h3 { color:var(--cyan); margin:0; } .agency p { color:var(--muted); font-size:.86rem; margin:7px 0 14px; } .count { color:var(--pink); font-size:.78rem; font-weight:800; }
-    .cars { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; } .car { background:#09051c; border-radius:10px; padding:11px; font-size:.8rem; } .car small { display:block; color:var(--muted); margin-top:4px; }
-     .overview-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; } .metric { min-height:108px; } .metric .value { color:var(--cyan); } .live-note { color:var(--muted); font-size:.75rem; margin:0 0 16px; } .live-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#42f59b; margin-right:6px; box-shadow:0 0 10px #42f59b; } .updated { color:#42f59b; }
-      .bot-control { margin:0 0 16px; } .control-head { display:flex; align-items:center; justify-content:space-between; gap:16px; } .control-head h2 { color:var(--cyan); font-size:1.15rem; margin:7px 0 0; } .control-actions { display:flex; gap:8px; flex-wrap:wrap; } .control-actions button { color:var(--bg); background:var(--cyan); border-color:var(--cyan); font-weight:800; } .control-actions button[data-action="stop"] { color:#f5f3ff; background:#ff2d9530; border-color:#ff2d9570; } .control-actions button:disabled { cursor:not-allowed; opacity:.45; } .bot-control p { color:var(--muted); font-size:.82rem; margin:13px 0 0; }
-      .command-tools { display:flex; gap:10px; margin:0 0 15px; } .command-tools input { flex:1; color:#f5f3ff; background:#121027cc; border:1px solid #ffffff1c; border-radius:12px; padding:11px 14px; font:inherit; outline:none; } .command-tools input:focus { border-color:var(--cyan); box-shadow:0 0 0 3px #00e5ff1c; } .copy { float:right; color:var(--cyan); background:transparent; border:0; padding:0; font-size:.7rem; cursor:pointer; } .copy:hover { color:var(--pink); background:transparent; border:0; }
-     .empty { color:var(--muted); text-align:center; padding:25px; } footer { color:#8983a8; text-align:center; font-size:.76rem; margin-top:34px; }
-     @media (max-width:900px) { .stats { grid-template-columns:repeat(3,1fr); } .command-grid,.overview-grid { grid-template-columns:repeat(2,1fr); } } @media (max-width:700px) { .top { display:block; } .badge { display:inline-block; margin-top:22px; } .stats,.command-grid,.overview-grid,.cars { grid-template-columns:1fr; } .shell { padding:28px 15px 44px; } }
-  </style>
-</head>
-<body>
-  <main class="shell">
-     <header class="top"><div><div class="eyebrow">South Florida Roleplay • Central</div><h1>🌴 Miami Vice</h1><p class="intro">La ciudad nunca duerme. Consulta los comandos, conoce las agencias y revisa la flota que mantiene vivo el 305.</p></div><div class="badge">MIAMI • 305</div></header>
-    <section class="stats">
-      <div class="card"><div class="label">Estado</div><div class="value" id="status">—</div></div>
-      <div class="card"><div class="label">Servidores</div><div class="value" id="guilds">—</div></div>
-      <div class="card"><div class="label">Tiempo activo</div><div class="value" id="uptime">—</div></div>
-       <div class="card"><div class="label">Ping</div><div class="value" id="ping">—</div></div>
-       <div class="card"><div class="label">Agencias</div><div class="value" id="agency-count">—</div></div>
-       <div class="card"><div class="label">Vehículos</div><div class="value" id="vehicle-count">—</div></div>
-     </section>
-     <section class="card bot-control">
-       <div class="control-head"><div><div class="label">Control del bot</div><h2 id="control-status">CARGANDO</h2></div><div class="control-actions"><button id="bot-start" data-action="start">Encender bot</button><button id="bot-stop" data-action="stop">Apagar bot</button></div></div>
-       <p id="control-message">Puedes controlar la conexión de Discord desde este panel.</p>
-     </section>
-      <p class="live-note"><span class="live-dot"></span>Datos en tiempo real · última actualización: <span id="updated" class="updated">—</span></p>
-     <nav class="tabs" aria-label="Secciones"><button class="active" data-tab="overview">Resumen</button><button data-tab="commands">Comandos</button><button data-tab="agencies">Agencias y flota</button></nav>
-     <section id="overview" class="panel active"><div class="overview-grid" id="overview-grid"></div></section>
-     <section id="commands" class="panel"><div class="command-tools"><input id="command-search" type="search" placeholder="Buscar un comando, por ejemplo: banco o propiedad" aria-label="Buscar comandos"></div><div id="command-grid" class="command-grid"></div></section>
-    <section id="agencies" class="panel"><div id="agency-list"></div></section>
-    <footer>Miami Vice RP • Neon nights on Ocean Drive</footer>
-  </main>
-  <script>
-     let snapshot = {data: __DATA__, stats: __STATS__};
-     const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-     function render(next) {
-       snapshot = next;
-       const {data, stats} = snapshot;
-       document.querySelector('#status').textContent = stats.status;
-       document.querySelector('#guilds').textContent = stats.guilds;
-       document.querySelector('#uptime').textContent = stats.uptime;
-       document.querySelector('#ping').textContent = stats.online ? `${stats.ping} ms` : '—';
-       document.querySelector('#agency-count').textContent = data.overview.agencies;
-       document.querySelector('#vehicle-count').textContent = data.overview.vehicles;
-       document.querySelector('#updated').textContent = new Date().toLocaleTimeString('es-CO');
-       document.querySelector('#control-status').textContent = stats.control_status || stats.status;
-       document.querySelector('#bot-start').disabled = !stats.control_enabled || stats.control_status === 'ENCENDIDO' || stats.control_status === 'CONECTANDO';
-       document.querySelector('#bot-stop').disabled = !stats.control_enabled || stats.control_status === 'APAGADO';
-       document.querySelector('#overview-grid').innerHTML = [
-         ['Vehículos activos', data.overview.active_vehicles, 'En servicio ahora'],
-         ['Mercado activo', data.overview.active_listings, 'Publicaciones disponibles'],
-         ['Propiedades libres', data.overview.available_properties, 'Disponibles para comprar'],
-         ['Tickets abiertos', data.overview.open_tickets, 'Solicitudes de soporte'],
-         ['Solicitudes pendientes', data.overview.pending_applications, 'Por revisar'],
-         ['Comandos disponibles', Object.values(data.commands).reduce((sum, group) => sum + group.length, 0), 'Guía completa del servidor'],
-       ].map(([label, value, hint]) => `<article class="card metric"><div class="label">${label}</div><div class="value">${value}</div><div class="label">${hint}</div></article>`).join('');
-       const search = document.querySelector('#command-search').value.toLowerCase().trim();
-       document.querySelector('#command-grid').innerHTML = Object.entries(data.commands).map(([group, commands]) => {
-         const visible = commands.filter(command => !search || `${group} ${command}`.toLowerCase().includes(search));
-         return visible.length ? `<article class="command-card"><h3>${esc(group)}</h3>${visible.map(command => `<span class="command">${esc(command)}<button class="copy" data-command="${esc(command)}" title="Copiar comando">Copiar</button></span>`).join('')}</article>` : '';
-       }).join('') || '<div class="card empty">No encontramos comandos con esa búsqueda.</div>';
-       const agencyList = document.querySelector('#agency-list');
-       agencyList.innerHTML = data.agencies.length ? data.agencies.map(agency => {
-         const cars = agency.fleet.length ? agency.fleet.map(car => `<div class="car">🚘 ${esc(car.vehicle)}<small>${esc(car.plate)} • ${esc(car.status)}</small></div>`).join('') : '<div class="empty">Sin vehículos registrados</div>';
-         return `<article class="card agency"><div class="agency-head"><h3>${esc(agency.acronym)} • ${esc(agency.name)}</h3><span class="count">${agency.fleet.length} vehículos</span></div><p>${esc(agency.description)}</p><div class="cars">${cars}</div></article>`;
-       }).join('') : '<div class="card empty">No hay agencias configuradas todavía.</div>';
-     }
-     render(snapshot);
-     document.querySelector('#command-search').addEventListener('input', () => render(snapshot));
-    document.addEventListener('click', async event => {
-      const control = event.target.closest('[data-action]');
-      if (control) {
-        control.disabled = true;
-        document.querySelector('#control-message').textContent = 'Enviando orden…';
-        try {
-          const response = await fetch('/bot/control', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({action: control.dataset.action})});
-          const result = await response.json();
-          document.querySelector('#control-message').textContent = result.message;
-          await refresh();
-        } catch (error) {
-          document.querySelector('#control-message').textContent = 'No se pudo contactar al controlador.';
+# ================== HEALTH CHECK ================== #
+@app.route("/healthz")
+@app.route("/ping")
+@app.route("/health")
+def health_check():
+    return jsonify({"status": "ok", "service": "miami-vice-bot", "timestamp": time.time()}), 200
+
+
+# ================== API ENDPOINTS (FOR REACT SPA) ================== #
+@app.route("/api/bot/status")
+def api_bot_status():
+    bot = _bot_ref
+    ready = bool(bot and bot.is_ready())
+    start_time = getattr(bot, "start_time", None)
+    uptime_seconds = int(time.time() - start_time) if (ready and start_time) else 0
+    token = os.environ.get("DISCORD_TOKEN", "")
+    has_token = bool(token and len(token) > 10)
+    token_masked = f"{token[:6]}...{token[-4:]}" if has_token else "No configurado"
+    
+    db_conn = check_connection()
+    cogs_list = [
+        "bot.cogs.economy",
+        "bot.cogs.bank",
+        "bot.cogs.crimen",
+        "bot.cogs.inventory",
+        "bot.cogs.marketplace",
+        "bot.cogs.departments",
+        "bot.cogs.companies",
+        "bot.cogs.properties",
+        "bot.cogs.social",
+        "bot.cogs.tickets",
+        "bot.cogs.verification",
+        "bot.cogs.admin",
+        "bot.cogs.help",
+        "bot.cogs.guia",
+    ]
+    return jsonify({
+        "status": "online" if ready else "idle",
+        "pid": os.getpid(),
+        "uptimeSeconds": uptime_seconds,
+        "hasToken": has_token,
+        "tokenMasked": token_masked,
+        "dbExists": db_conn.get("ok", False),
+        "dbBackend": "Supabase Postgres" if os.environ.get("SUPABASE_DB_URL") else f"SQLite Local ({DB_PATH.name})",
+        "cogsCount": len(cogs_list),
+        "cogsList": cogs_list,
+    })
+
+
+@app.route("/api/bot/start", methods=["POST"])
+def api_bot_start():
+    result = _control_bot("start")
+    return jsonify({"success": result.get("ok", False), "message": result.get("message", "")})
+
+
+@app.route("/api/bot/stop", methods=["POST"])
+def api_bot_stop():
+    result = _control_bot("stop")
+    return jsonify({"success": result.get("ok", False), "message": result.get("message", "")})
+
+
+@app.route("/api/bot/restart", methods=["POST"])
+def api_bot_restart():
+    _control_bot("stop")
+    time.sleep(1)
+    result = _control_bot("start")
+    return jsonify({"success": True, "message": "Bot reiniciado."})
+
+
+@app.route("/api/bot/reset-clean", methods=["POST"])
+def api_bot_reset_clean():
+    payload = request.get_json(silent=True) or {}
+    wipe_db = payload.get("wipeDb", False)
+    _control_bot("stop")
+    if wipe_db:
+        db_file = Path(__file__).resolve().parent / "miami_vice.sqlite3"
+        if db_file.exists():
+            try:
+                db_file.unlink()
+            except Exception:
+                pass
+    time.sleep(1)
+    _control_bot("start")
+    return jsonify({"success": True, "message": "Reinicio limpio ejecutado."})
+
+
+@app.route("/api/bot/logs")
+def api_bot_logs():
+    bot = _bot_ref
+    ready = bool(bot and bot.is_ready())
+    timestamp_str = time.strftime("%H:%M:%S")
+    
+    demo_logs = [
+        {"id": 1, "time": timestamp_str, "stream": "system", "text": "NYC RP Bot Manager & Control Hub inicializado."},
+        {"id": 2, "time": timestamp_str, "stream": "system", "text": f"Estado del bot Discord: {'EN LÍNEA ✅' if ready else 'EN ESPERA ⏳'}"},
+        {"id": 3, "time": timestamp_str, "stream": "stdout", "text": f"Base de datos activa: {check_connection().get('masked_url', 'Desconocido')}"},
+    ]
+    if ready:
+        demo_logs.append({"id": 4, "time": timestamp_str, "stream": "stdout", "text": f"[BOT] Conectado con latencia: {round(bot.latency * 1000)}ms en {len(bot.guilds)} servidores."})
+    
+    return jsonify({"logs": demo_logs, "lastId": len(demo_logs)})
+
+
+@app.route("/api/bot/logs/clear", methods=["POST"])
+def api_bot_logs_clear():
+    return jsonify({"success": True})
+
+
+@app.route("/api/bot/files")
+def api_bot_files():
+    base_dir = Path(__file__).resolve().parent
+    results = []
+    
+    root_files = ["main.py", "keep_alive.py", "requirements.txt", "test_database.py"]
+    for f in root_files:
+        p = base_dir / f
+        if p.exists():
+            results.append({"path": f, "name": f, "type": "file", "size": p.stat().st_size})
+
+    bot_dir = base_dir / "bot"
+    if bot_dir.exists():
+        for root, dirs, files in os.walk(bot_dir):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]
+            rel_root = os.path.relpath(root, base_dir)
+            if rel_root != ".":
+                results.append({"path": rel_root.replace("\\", "/"), "name": os.path.basename(root), "type": "dir"})
+            for file in sorted(files):
+                if file.endswith(".py") or file.endswith(".sql") or file.endswith(".json"):
+                    full_p = os.path.join(root, file)
+                    rel_p = os.path.relpath(full_p, base_dir).replace("\\", "/")
+                    results.append({"path": rel_p, "name": file, "type": "file", "size": os.path.getsize(full_p)})
+
+    return jsonify({"files": results})
+
+
+@app.route("/api/bot/file-content")
+def api_bot_file_content():
+    target_rel = request.args.get("path", "")
+    if not target_rel or ".." in target_rel:
+        return jsonify({"error": "Ruta de archivo inválida"}), 400
+    base_dir = Path(__file__).resolve().parent
+    target_path = base_dir / target_rel
+    if not target_path.exists() or not target_path.is_file():
+        return jsonify({"error": "Archivo no encontrado"}), 404
+    try:
+        content = target_path.read_text(encoding="utf-8")
+        return jsonify({"path": target_rel, "content": content})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/bot/save-file", methods=["POST"])
+def api_bot_save_file():
+    payload = request.get_json(silent=True) or {}
+    target_rel = payload.get("path", "")
+    content = payload.get("content", "")
+    if not target_rel or ".." in target_rel:
+        return jsonify({"error": "Ruta inválida"}), 400
+    base_dir = Path(__file__).resolve().parent
+    target_path = base_dir / target_rel
+    try:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_text(content, encoding="utf-8")
+        return jsonify({"success": True, "message": "Archivo guardado exitosamente."})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/database/stats")
+def api_database_stats():
+    try:
+        from bot.db import is_postgres, check_connection
+        check_connection()
+        if is_postgres():
+            tables_rows = _safe_query("SELECT table_name as name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name")
+        else:
+            tables_rows = _safe_query("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+
+        tables_list = [r["name"] for r in tables_rows] if tables_rows else []
+        table_stats = []
+        total_rows = 0
+
+        CATEGORY_MAP = {
+            "users": ("users_config", "Cuentas bancarias y perfiles"),
+            "transactions": ("economy_banking", "Historial de transferencias"),
+            "savings_accounts": ("economy_banking", "Cuentas de ahorro"),
+            "investments": ("economy_banking", "Portafolios de inversión"),
+            "loans": ("economy_banking", "Créditos bancarios activos"),
+            "treasury": ("economy_banking", "Fondos de tesorería municipal"),
+            "companies": ("companies_props", "Empresas registradas"),
+            "properties": ("companies_props", "Inmuebles y propiedades"),
+            "departments": ("departments_fleet", "Agencias gubernamentales"),
+            "fleet_vehicles": ("departments_fleet", "Vehículos de flota"),
+            "drug_operations": ("crime_night", "Operaciones de sustancias"),
+            "criminal_missions": ("crime_night", "Misiones de crimen organizado"),
+            "money_laundering": ("crime_night", "Contratos de lavado"),
+            "marketplace_listings": ("market_inventory", "Publicaciones activas"),
+            "user_inventory": ("market_inventory", "Mochila e ítems de usuarios"),
+            "tickets": ("tickets_contracts", "Tickets de soporte y reportes"),
+            "contracts": ("tickets_contracts", "Contratos laborales y privados"),
+            "applications": ("tickets_contracts", "Postulaciones a agencias"),
         }
-        return;
-      }
-       const button = event.target.closest('[data-command]');
-       if (!button) return;
-       try { await navigator.clipboard.writeText(button.dataset.command); button.textContent = 'Copiado'; setTimeout(() => button.textContent = 'Copiar', 1200); }
-       catch (error) { button.textContent = 'Selecciona'; }
-     });
-     async function refresh() {
-       try { const response = await fetch('/status', {cache:'no-store'}); if (response.ok) render(await response.json()); }
-       catch (error) { document.querySelector('#updated').textContent = 'sin conexión'; }
-     }
-     setInterval(refresh, 5000);
-    document.querySelectorAll('[data-tab]').forEach(button => button.addEventListener('click', () => {
-      document.querySelectorAll('[data-tab], .panel').forEach(element => element.classList.remove('active'));
-      button.classList.add('active'); document.querySelector('#' + button.dataset.tab).classList.add('active');
-    }));
-  </script>
-</body>
-</html>"""
+
+        for t in tables_list:
+            try:
+                cnt = _safe_count(t)
+                total_rows += cnt
+                if is_postgres():
+                    cols_res = _safe_query(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{t}'")
+                else:
+                    cols_res = _safe_query(f'PRAGMA table_info("{t}")')
+                cols_cnt = len(cols_res) if cols_res else 0
+                cat, desc = CATEGORY_MAP.get(t, ("other", "Tabla del sistema"))
+                table_stats.append({
+                    "name": t,
+                    "count": cnt,
+                    "columnsCount": cols_cnt,
+                    "category": cat,
+                    "description": desc,
+                })
+            except Exception:
+                pass
+
+        user_count = _safe_count("users") if "users" in tables_list else 0
+        total_cash_rows = _safe_query("SELECT COALESCE(SUM(cash), 0) AS total_cash, COALESCE(SUM(bank), 0) AS total_bank FROM users") if "users" in tables_list else []
+        total_cash = int(total_cash_rows[0]["total_cash"]) if total_cash_rows else 0
+        total_bank = int(total_cash_rows[0]["total_bank"]) if total_cash_rows else 0
+
+        return jsonify({
+            "tables": table_stats,
+            "totalTables": len(table_stats),
+            "totalRows": total_rows,
+            "userCount": user_count,
+            "totalEconomy": total_cash + total_bank,
+            "totalCash": total_cash,
+            "totalBank": total_bank,
+        })
+    except Exception as err:
+        logger.error(f"Error calculando estadísticas de BD: {err}")
+        return jsonify({
+            "tables": [],
+            "totalTables": 0,
+            "totalRows": 0,
+            "userCount": 0,
+            "totalEconomy": 0,
+            "totalCash": 0,
+            "totalBank": 0,
+        })
 
 
-@app.route("/")
-@app.route("/dashboard")
-def dashboard():
-    return PAGE.replace("__DATA__", json.dumps(_server_data(), ensure_ascii=False)).replace("__STATS__", json.dumps(_bot_stats(), ensure_ascii=False))
+@app.route("/api/database/table-schema")
+def api_database_table_schema():
+    table_name = request.args.get("table", "users")
+    if not table_name.replace("_", "").isalnum():
+        return jsonify({"error": "Nombre de tabla inválido"}), 400
+    try:
+        from bot.db import is_postgres
+        if is_postgres():
+            rows = _safe_query(f"""
+                SELECT column_name as name, data_type as type,
+                       (CASE WHEN is_nullable = 'NO' THEN 1 ELSE 0 END) as notnull,
+                       column_default as dflt_value, 0 as pk
+                FROM information_schema.columns
+                WHERE table_name = '{table_name}'
+                ORDER BY ordinal_position
+            """)
+        else:
+            rows = _safe_query(f'PRAGMA table_info("{table_name}")')
+        return jsonify({"columns": rows, "table": table_name})
+    except Exception as e:
+        return jsonify({"error": str(e), "columns": [], "table": table_name})
+
+
+@app.route("/api/database/table-data")
+def api_database_table_data():
+    table_name = request.args.get("table", "users")
+    limit = min(int(request.args.get("limit", 50)), 1000)
+    page = max(int(request.args.get("page", 1)), 1)
+    offset = (page - 1) * limit
+    sort_by = request.args.get("sortBy", "")
+    sort_order = "DESC" if request.args.get("sortOrder", "").lower() == "desc" else "ASC"
+
+    if not table_name.replace("_", "").isalnum():
+        return jsonify({"error": "Nombre de tabla inválido"}), 400
+
+    try:
+        from bot.db import is_postgres
+        if is_postgres():
+            cols_meta = _safe_query(f"""
+                SELECT column_name as name, data_type as type,
+                       (CASE WHEN is_nullable = 'NO' THEN 1 ELSE 0 END) as notnull,
+                       column_default as dflt_value, 0 as pk
+                FROM information_schema.columns
+                WHERE table_name = '{table_name}'
+                ORDER BY ordinal_position
+            """)
+        else:
+            cols_meta = _safe_query(f'PRAGMA table_info("{table_name}")')
+
+        columns = [c["name"] for c in cols_meta] if cols_meta else []
+        cnt_res = _safe_query(f'SELECT COUNT(*) as c FROM "{table_name}"')
+        total_count = int(cnt_res[0]["c"]) if cnt_res else 0
+
+        order_clause = ""
+        if sort_by and sort_by in columns:
+            order_clause = f'ORDER BY "{sort_by}" {sort_order}'
+        elif "created_at" in columns:
+            order_clause = "ORDER BY created_at DESC"
+        elif "id" in columns:
+            order_clause = "ORDER BY id ASC"
+
+        query = f'SELECT * FROM "{table_name}" {order_clause} LIMIT {limit} OFFSET {offset}'
+        rows = _safe_query(query)
+        total_pages = max(1, (total_count + limit - 1) // limit) if limit > 0 else 1
+
+        return jsonify({
+            "table": table_name,
+            "columns": cols_meta,
+            "rows": rows,
+            "count": len(rows),
+            "totalCount": total_count,
+            "page": page,
+            "limit": limit,
+            "totalPages": total_pages,
+        })
+    except Exception as e:
+        return jsonify({
+            "error": str(e),
+            "table": table_name,
+            "columns": [],
+            "rows": [],
+            "count": 0,
+            "totalCount": 0,
+            "page": 1,
+            "limit": limit,
+            "totalPages": 1,
+        })
+
+
+@app.route("/api/database/query", methods=["POST"])
+def api_database_query():
+    payload = request.get_json(silent=True) or {}
+    sql = payload.get("sql", "").strip()
+    if not sql:
+        return jsonify({"error": "Consulta SQL no proporcionada"}), 400
+    if not sql.upper().startswith(("SELECT", "PRAGMA", "EXPLAIN", "SHOW")):
+        return jsonify({"error": "Por seguridad, la consola web solo permite consultas de lectura (SELECT, PRAGMA, EXPLAIN)."}), 403
+    try:
+        t0 = time.time()
+        rows = _safe_query(sql)
+        elapsed_ms = round((time.time() - t0) * 1000, 2)
+        columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+        return jsonify({
+            "success": True,
+            "columns": columns,
+            "rows": rows,
+            "rowCount": len(rows),
+            "executionTimeMs": elapsed_ms,
+        })
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e), "columns": [], "rows": [], "rowCount": 0})
+
+
+@app.route("/api/database/wipe-clean", methods=["POST"])
+def api_database_wipe_clean():
+    try:
+        from scripts.init_db import init_db
+        tables = [
+            'users', 'transactions', 'savings_accounts', 'investments', 'loans', 'treasury',
+            'companies', 'company_members', 'properties', 'property_transactions',
+            'departments', 'department_members', 'department_audit', 'fleet_vehicle_types', 'fleet_vehicles',
+            'drug_operations', 'criminal_missions', 'money_laundering',
+            'auctions', 'marketplace_listings', 'user_inventory', 'shop', 'black_market_stock', 'black_market_transactions', 'items', 'jobs',
+            'tickets', 'ticket_config', 'contracts', 'applications', 'application_config',
+            'level_rewards', 'auto_roles', 'temp_roles',
+            'verification_logs', 'verification_config', 'guild_config', 'db_state'
+        ]
+        for t in tables:
+            try:
+                execute(f'DELETE FROM "{t}"')
+            except Exception:
+                pass
+        init_db()
+        return jsonify({"success": True, "message": "Base de datos restablecida a estado 100% limpio."})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)})
 
 
 @app.route("/status")
@@ -331,14 +626,60 @@ def bot_control():
     return jsonify(result), 200 if result["ok"] else 503
 
 
+# ================== FRONTEND SERVING (REACT SPA) ================== #
+@app.route("/assets/<path:filename>")
+def serve_assets(filename):
+    assets_dir = DIST_DIR / "assets"
+    if assets_dir.exists() and (assets_dir / filename).exists():
+        return send_from_directory(str(assets_dir), filename)
+    return jsonify({"error": "Asset not found"}), 404
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    if path and (DIST_DIR / path).exists():
+        return send_from_directory(str(DIST_DIR), path)
+
+    index_file = DIST_DIR / "index.html"
+    if index_file.exists():
+        return send_from_directory(str(DIST_DIR), "index.html")
+
+    return jsonify({
+        "service": "NYC RP Bot Hub",
+        "status": "online",
+        "api": "/api/bot/status",
+        "health": "/healthz"
+    })
+
+
 def keep_alive():
-    import os
-    if os.environ.get("DISABLE_FLASK_PORT_3000", "1") == "1":
+    if os.environ.get("DISABLE_FLASK") == "1":
+        logger.info("[KEEP_ALIVE] Servidor Flask desactivado por configuración.")
+        return
+
+    is_render = bool(os.environ.get("RENDER") or os.environ.get("RENDER_SERVICE_ID"))
+    default_port = 10000 if is_render else 3000
+    try:
+        port = int(os.environ.get("PORT", str(default_port)))
+    except (ValueError, TypeError):
+        port = default_port
+
+    if not is_render and os.environ.get("DISABLE_FLASK_PORT_3000") == "1" and port == 3000:
         logger.info("[KEEP_ALIVE] Servidor web principal gestionado por Express en puerto 3000.")
         return
+
+    def _run_server():
+        try:
+            werkzeug_logger = logging.getLogger("werkzeug")
+            werkzeug_logger.setLevel(logging.WARNING)
+            app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
+        except Exception as e:
+            logger.warning(f"[KEEP_ALIVE] Error en servidor Flask (puerto {port}): {e}")
+
     try:
-        thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=3000, use_reloader=False))
-        thread.daemon = True
+        thread = threading.Thread(target=_run_server, daemon=True)
         thread.start()
+        logger.info(f"[KEEP_ALIVE] Panel Web & Bot Manager activo en 0.0.0.0:{port} ✅")
     except Exception as e:
-        logger.warning(f"[KEEP_ALIVE] No se pudo iniciar servidor Flask secundario: {e}")
+        logger.warning(f"[KEEP_ALIVE] No se pudo iniciar hilo del servidor web: {e}")

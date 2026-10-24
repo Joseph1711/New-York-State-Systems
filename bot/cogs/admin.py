@@ -5,7 +5,7 @@ import datetime
 import random
 
 from bot.db import aexecute, aexecute_many
-from bot.helpers import async_get_or_create_user, async_get_or_create_guild_config, format_currency, generate_id
+from bot.helpers import async_get_or_create_user, async_get_or_create_guild_config, format_currency, generate_id, check_admin_permission
 from bot.embeds import success_embed, error_embed, info_embed
 from bot.services.economy import async_add_cash, async_add_bank, async_log_transaction
 
@@ -96,8 +96,8 @@ BLACK_MARKET_ITEMS = [
     {"name":"Vehículo Chop Shop","category":"Contrabando","rarity":"rare","price":20000,"emoji":"🚗"},
 ]
 
-def admin_check(interaction: discord.Interaction):
-    return interaction.user.guild_permissions.administrator
+async def admin_check(interaction: discord.Interaction) -> bool:
+    return await check_admin_permission(interaction)
 
 class Admin(commands.Cog):
     def __init__(self, bot):
@@ -115,7 +115,7 @@ class Admin(commands.Cog):
     ])
     async def eco_dar(self, interaction: discord.Interaction, usuario: discord.Member, cantidad: int, tipo: str = "cash"):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await async_get_or_create_user(str(usuario.id), str(interaction.guild_id))
@@ -133,7 +133,7 @@ class Admin(commands.Cog):
     ])
     async def eco_quitar(self, interaction: discord.Interaction, usuario: discord.Member, cantidad: int, tipo: str = "cash"):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         if tipo == "cash":
@@ -155,7 +155,7 @@ class Admin(commands.Cog):
     ])
     async def items_crear(self, interaction: discord.Interaction, nombre: str, categoria: str, rareza: str, precio: int, emoji: str = "📦"):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         item_id = generate_id()
@@ -169,7 +169,7 @@ class Admin(commands.Cog):
     @admin_items.command(name="lista", description="Ver todos los objetos")
     async def items_lista(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         items = await aexecute("SELECT * FROM items ORDER BY category, name LIMIT 25", fetch="all") or []
@@ -188,10 +188,10 @@ class Admin(commands.Cog):
     admin_dept = app_commands.Group(name="departamento", description="Gestión de departamentos", parent=admin)
 
     @admin_dept.command(name="crear", description="Crear un departamento")
-    @app_commands.describe(nombre="Nombre completo", acronimo="Acrónimo (CPD, CFD, etc.)", descripcion="Descripción", presupuesto="Presupuesto inicial")
+    @app_commands.describe(nombre="Nombre completo", acronimo="Acrónimo (MPD, MDFR, FHP, FDOT, MBPD, FDOJ)", descripcion="Descripción", presupuesto="Presupuesto inicial")
     async def dept_crear(self, interaction: discord.Interaction, nombre: str, acronimo: str, descripcion: str = "", presupuesto: int = 10000):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         existing = await aexecute("SELECT id FROM departments WHERE guild_id=$1 AND acronym ILIKE $2", (str(interaction.guild_id), acronimo), fetch="one")
@@ -220,7 +220,7 @@ class Admin(commands.Cog):
     ])
     async def prop_crear(self, interaction: discord.Interaction, nombre: str, tipo: str, precio: int, precio_renta: int = 0):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await aexecute(
@@ -236,7 +236,7 @@ class Admin(commands.Cog):
     @app_commands.describe(usuario="Jugador", cantidad="Cantidad de XP")
     async def xp_dar(self, interaction: discord.Interaction, usuario: discord.Member, cantidad: int):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await async_get_or_create_user(str(usuario.id), str(interaction.guild_id))
@@ -247,7 +247,7 @@ class Admin(commands.Cog):
     @app_commands.describe(usuario="Jugador", cantidad="Cantidad de XP")
     async def xp_quitar(self, interaction: discord.Interaction, usuario: discord.Member, cantidad: int):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await aexecute("UPDATE users SET xp=GREATEST(0,xp-$1), updated_at=NOW() WHERE discord_id=$2 AND guild_id=$3", (cantidad, str(usuario.id), str(interaction.guild_id)))
@@ -257,7 +257,7 @@ class Admin(commands.Cog):
     @app_commands.describe(valor="Multiplicador (ej: 1.5 = +50% XP). Omite para ver el actual.")
     async def xp_multiplicador(self, interaction: discord.Interaction, valor: float = None):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await async_get_or_create_guild_config(str(interaction.guild_id))
@@ -275,7 +275,7 @@ class Admin(commands.Cog):
     @app_commands.describe(usuario="Jugador a restablecer")
     async def reset_usuario(self, interaction: discord.Interaction, usuario: discord.Member):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await aexecute(
@@ -288,7 +288,7 @@ class Admin(commands.Cog):
     @app_commands.describe(usuario="Jugador")
     async def reset_cooldowns(self, interaction: discord.Interaction, usuario: discord.Member):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await aexecute(
@@ -303,7 +303,7 @@ class Admin(commands.Cog):
     @app_commands.describe(nivel="Nivel requerido", rol="Rol a otorgar")
     async def rewards_agregar(self, interaction: discord.Interaction, nivel: int, rol: discord.Role):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         existing = await aexecute("SELECT id FROM level_rewards WHERE guild_id=$1 AND level=$2", (str(interaction.guild_id), nivel), fetch="one")
@@ -319,7 +319,7 @@ class Admin(commands.Cog):
     @admin_rewards.command(name="lista", description="Ver recompensas de nivel configuradas")
     async def rewards_lista(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         rewards = await aexecute(
@@ -338,7 +338,7 @@ class Admin(commands.Cog):
     @app_commands.describe(nivel="Nivel")
     async def rewards_quitar(self, interaction: discord.Interaction, nivel: int):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await aexecute("DELETE FROM level_rewards WHERE guild_id=$1 AND level=$2", (str(interaction.guild_id), nivel))
@@ -346,11 +346,68 @@ class Admin(commands.Cog):
 
     admin_cfg = app_commands.Group(name="configuracion", description="Configuración del servidor", parent=admin)
 
+    @admin_cfg.command(name="rol_admin", description="Configurar el rol de administrador para comandos admin")
+    @app_commands.describe(rol="Rol que tendrá permisos de administrador")
+    async def cfg_rol_admin(self, interaction: discord.Interaction, rol: discord.Role):
+        await interaction.response.defer()
+        if not await admin_check(interaction):
+            await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores autorizados"), ephemeral=True)
+            return
+        await async_get_or_create_guild_config(str(interaction.guild_id))
+        await aexecute("UPDATE guild_config SET admin_role_id=$1, updated_at=NOW() WHERE guild_id=$2", (str(rol.id), str(interaction.guild_id)))
+        await interaction.followup.send(embed=success_embed("Rol Admin Configurado", f"Los comandos administrativos ahora pueden ser usados por el rol {rol.mention}"), ephemeral=True)
+
+    @admin_cfg.command(name="canal_trabajos", description="Configurar canal de revisiones para evidencias de trabajo")
+    @app_commands.describe(canal="Canal donde se enviarán las evidencias de trabajo para revisión")
+    async def cfg_canal_trabajos(self, interaction: discord.Interaction, canal: discord.TextChannel):
+        await interaction.response.defer()
+        if not await admin_check(interaction):
+            await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores autorizados"), ephemeral=True)
+            return
+        await async_get_or_create_guild_config(str(interaction.guild_id))
+        await aexecute("UPDATE guild_config SET work_logs_channel_id=$1, updated_at=NOW() WHERE guild_id=$2", (str(canal.id), str(interaction.guild_id)))
+        await interaction.followup.send(embed=success_embed("Canal de Trabajos Configurado", f"Las evidencias de trabajo se enviarán a {canal.mention}"), ephemeral=True)
+
+    async def _handle_canal_postulaciones(self, interaction: discord.Interaction, canal: discord.TextChannel):
+        await interaction.response.defer()
+        if not await admin_check(interaction):
+            await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores autorizados"), ephemeral=True)
+            return
+        gid = str(interaction.guild_id)
+        cid = str(canal.id)
+        await async_get_or_create_guild_config(gid)
+        await aexecute("UPDATE guild_config SET applications_channel_id=$1, updated_at=NOW() WHERE guild_id=$2", (cid, gid))
+        
+        # Sync with application_config table as well
+        existing_app_cfg = await aexecute("SELECT id FROM application_config WHERE guild_id=$1", (gid,), fetch="one")
+        if existing_app_cfg:
+            await aexecute("UPDATE application_config SET log_channel_id=$1, updated_at=NOW() WHERE guild_id=$2", (cid, gid))
+        else:
+            await aexecute("INSERT INTO application_config (id, guild_id, log_channel_id, created_at, updated_at) VALUES ($1,$2,$3,NOW(),NOW())", (generate_id(), gid, cid))
+
+        await interaction.followup.send(embed=success_embed("Canal de Postulaciones Configurado", f"Las solicitudes de departamentos se enviarán a {canal.mention}"), ephemeral=True)
+
+    @admin_cfg.command(name="canal_postulaciones", description="Configurar canal para postulaciones a departamentos")
+    @app_commands.describe(canal="Canal donde se enviarán las solicitudes a departamentos")
+    async def cfg_canal_postulaciones(self, interaction: discord.Interaction, canal: discord.TextChannel):
+        await self._handle_canal_postulaciones(interaction, canal)
+
+    @admin_cfg.command(name="solicitud", description="Alias: Configurar canal para postulaciones y solicitudes")
+    @app_commands.describe(canal="Canal donde se enviarán las postulaciones")
+    async def cfg_solicitud(self, interaction: discord.Interaction, canal: discord.TextChannel):
+        await self._handle_canal_postulaciones(interaction, canal)
+
+    @admin_cfg.command(name="canal_solicitudes", description="Alias: Configurar canal para postulaciones a departamentos")
+    @app_commands.describe(canal="Canal donde se enviarán las solicitudes")
+    async def cfg_canal_solicitudes(self, interaction: discord.Interaction, canal: discord.TextChannel):
+        await self._handle_canal_postulaciones(interaction, canal)
+
+
     @admin_cfg.command(name="diario", description="Configurar cantidad de /diario")
     @app_commands.describe(cantidad="Cantidad nueva")
     async def cfg_diario(self, interaction: discord.Interaction, cantidad: int):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await async_get_or_create_guild_config(str(interaction.guild_id))
@@ -361,7 +418,7 @@ class Admin(commands.Cog):
     @app_commands.describe(cantidad="Cantidad nueva")
     async def cfg_semanal(self, interaction: discord.Interaction, cantidad: int):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await async_get_or_create_guild_config(str(interaction.guild_id))
@@ -372,7 +429,7 @@ class Admin(commands.Cog):
     @app_commands.describe(canal="Canal de texto para logs")
     async def cfg_canal_log(self, interaction: discord.Interaction, canal: discord.TextChannel):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await async_get_or_create_guild_config(str(interaction.guild_id))
@@ -383,7 +440,7 @@ class Admin(commands.Cog):
     @app_commands.describe(rol="Rol de verificado", canal_log="Canal de logs", edad_minima="Edad mínima de cuenta en días")
     async def cfg_verificacion(self, interaction: discord.Interaction, rol: discord.Role = None, canal_log: discord.TextChannel = None, edad_minima: int = None):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         existing = await aexecute("SELECT id FROM verification_config WHERE guild_id=$1", (str(interaction.guild_id),), fetch="one")
@@ -407,7 +464,7 @@ class Admin(commands.Cog):
 
     @admin_cfg.command(name="ver", description="Ver todas las configuraciones actuales del servidor")
     async def cfg_ver(self, interaction: discord.Interaction):
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await interaction.response.defer(ephemeral=True)
@@ -486,7 +543,7 @@ class Admin(commands.Cog):
     @app_commands.describe(categoria="Categoría de Discord para tickets", rol_soporte="Rol de soporte")
     async def cfg_tickets(self, interaction: discord.Interaction, categoria: discord.CategoryChannel = None, rol_soporte: discord.Role = None):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         existing = await aexecute("SELECT id FROM ticket_config WHERE guild_id=$1", (str(interaction.guild_id),), fetch="one")
@@ -511,7 +568,7 @@ class Admin(commands.Cog):
     @app_commands.describe(objeto="Nombre del objeto", precio="Precio de venta", stock="Stock (-1 = infinito)")
     async def shop_agregar(self, interaction: discord.Interaction, objeto: str, precio: int, stock: int = -1):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         item = await aexecute("SELECT * FROM items WHERE name ILIKE $1 AND is_active=true LIMIT 1", (f"%{objeto}%",), fetch="one")
@@ -534,7 +591,7 @@ class Admin(commands.Cog):
     @app_commands.describe(objeto="Nombre del objeto")
     async def shop_quitar(self, interaction: discord.Interaction, objeto: str):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         item = await aexecute("SELECT * FROM items WHERE name ILIKE $1 LIMIT 1", (f"%{objeto}%",), fetch="one")
@@ -547,7 +604,7 @@ class Admin(commands.Cog):
     @adminshop.command(name="predeterminados", description="Cargar el catálogo legal de objetos en la tienda normal")
     async def shop_defaults(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
 
@@ -609,7 +666,7 @@ class Admin(commands.Cog):
     @adminshop.command(name="mercadonegro", description="Cargar el catálogo ilegal exclusivo del mercado negro")
     async def shop_blackmarket_defaults(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
 
@@ -673,7 +730,7 @@ class Admin(commands.Cog):
     @tesoro_group.command(name="info", description="Ver el estado del tesoro")
     async def tesoro_info(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         treasury = await aexecute("SELECT * FROM treasury WHERE guild_id=$1", (str(interaction.guild_id),), fetch="one")
@@ -689,7 +746,7 @@ class Admin(commands.Cog):
     @app_commands.describe(cantidad="Cantidad")
     async def tesoro_depositar(self, interaction: discord.Interaction, cantidad: int):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         treasury = await aexecute("SELECT * FROM treasury WHERE guild_id=$1", (str(interaction.guild_id),), fetch="one")
@@ -706,7 +763,7 @@ class Admin(commands.Cog):
     @app_commands.describe(acronimo="Acrónimo del departamento", cantidad="Cantidad")
     async def tesoro_financiar(self, interaction: discord.Interaction, acronimo: str, cantidad: int):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         treasury = await aexecute("SELECT * FROM treasury WHERE guild_id=$1", (str(interaction.guild_id),), fetch="one")
@@ -726,10 +783,13 @@ class Admin(commands.Cog):
     @solicitar_group.command(name="aplicar", description="Solicitar unirse a un departamento o equipo")
     @app_commands.describe(tipo="Tipo de solicitud")
     @app_commands.choices(tipo=[
-        app_commands.Choice(name="👮 CPD", value="CPD"),
-        app_commands.Choice(name="🚒 CFD", value="CFD"),
-        app_commands.Choice(name="⭐ Sheriff", value="Sheriff"),
-        app_commands.Choice(name="🚧 DOT", value="DOT"),
+        app_commands.Choice(name="👮 NYPD (New York Police Dept)", value="NYPD"),
+        app_commands.Choice(name="🚒 FDNY (New York Fire Deppt)", value="FDNY"),
+        app_commands.Choice(name="🚔 NYSP (New York State Patrol)", value="NYSP"),
+        app_commands.Choice(name="🚧 NYDOT (New York Dept of Transportation)", value="NYDOT"),
+        app_commands.Choice(name="🏙️ NYPD_B (New York Police)", value="NYPD_B"),
+        app_commands.Choice(name="⚖️ NYDOJ (New York Dept of Justice)", value="NYDOJ"),
+        app_commands.Choice(name="⭐ Sheriff (NYC)", value="Sheriff"),
         app_commands.Choice(name="🛠️ Staff", value="Staff"),
     ])
     async def solicitar_aplicar(self, interaction: discord.Interaction, tipo: str):
@@ -739,7 +799,7 @@ class Admin(commands.Cog):
     @solicitar_group.command(name="lista", description="Ver solicitudes pendientes (admin)")
     async def solicitar_lista(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         apps = await aexecute(
@@ -779,7 +839,7 @@ class Admin(commands.Cog):
     @app_commands.describe(titulo="Título", descripcion="Descripción", recompensa="Recompensa en cash")
     async def contrato_crear(self, interaction: discord.Interaction, titulo: str, descripcion: str, recompensa: int):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         await aexecute(
@@ -810,7 +870,7 @@ class Admin(commands.Cog):
     @app_commands.describe(id_contrato="ID del contrato")
     async def contrato_completar(self, interaction: discord.Interaction, id_contrato: str):
         await interaction.response.defer()
-        if not admin_check(interaction):
+        if not await admin_check(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Solo administradores"), ephemeral=True)
             return
         contract = await aexecute(
@@ -878,7 +938,7 @@ class ApplicationReviewView(discord.ui.View):
     @discord.ui.button(label="✅ Aprobar", style=discord.ButtonStyle.success, custom_id="app_approve")
     async def approve(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        if not interaction.user.guild_permissions.manage_roles:
+        if not await check_admin_permission(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Sin permisos"), ephemeral=True)
             return
         await aexecute("UPDATE applications SET status='approved', reviewed_by=$1, updated_at=NOW() WHERE id=$2", (str(interaction.user.id), self.app_id))
@@ -887,7 +947,7 @@ class ApplicationReviewView(discord.ui.View):
     @discord.ui.button(label="❌ Rechazar", style=discord.ButtonStyle.danger, custom_id="app_deny")
     async def deny(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        if not interaction.user.guild_permissions.manage_roles:
+        if not await check_admin_permission(interaction):
             await interaction.followup.send(embed=error_embed("Sin permisos", "Sin permisos"), ephemeral=True)
             return
         await aexecute("UPDATE applications SET status='denied', reviewed_by=$1, updated_at=NOW() WHERE id=$2", (str(interaction.user.id), self.app_id))

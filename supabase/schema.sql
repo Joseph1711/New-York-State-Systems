@@ -1,4 +1,4 @@
--- Miami Vice RP - Supabase/Postgres schema
+-- New York State Roleplay Spanish - Supabase/Postgres schema
 -- Also executed automatically by scripts/init_db.py.
 -- =====================
 -- USERS & GUILD CONFIG
@@ -7,13 +7,15 @@ CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     discord_id TEXT NOT NULL,
     guild_id TEXT NOT NULL,
+    username TEXT,
+    display_name TEXT,
     cash NUMERIC DEFAULT 500,
     bank NUMERIC DEFAULT 0,
     xp INTEGER DEFAULT 0,
     level INTEGER DEFAULT 1,
     reputation INTEGER DEFAULT 0,
     dirty_money NUMERIC DEFAULT 0,
-    profile_note TEXT DEFAULT 'Made By Joseph',
+    profile_note TEXT DEFAULT 'Made By Joshi',
     is_verified BOOLEAN DEFAULT FALSE,
     last_daily TIMESTAMP,
     last_weekly TIMESTAMP,
@@ -112,6 +114,7 @@ CREATE TABLE IF NOT EXISTS auctions (
     guild_id TEXT NOT NULL,
     seller_id TEXT NOT NULL,
     item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    quantity INTEGER DEFAULT 1,
     starting_bid NUMERIC NOT NULL,
     current_bid NUMERIC,
     current_bidder_id TEXT,
@@ -472,5 +475,77 @@ CREATE TABLE IF NOT EXISTS criminal_missions (
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
-ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_note TEXT DEFAULT 'Made By Joseph';
-UPDATE users SET profile_note = COALESCE(profile_note, 'Made By Joseph') WHERE profile_note IS NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_note TEXT DEFAULT 'Made By Joshi';
+UPDATE users SET profile_note = 'Made By Joshi' WHERE profile_note IS NULL OR profile_note = 'Made By Joseph';
+
+-- =====================
+-- SERVER STATUS & VOTING
+-- =====================
+CREATE TABLE IF NOT EXISTS server_status (
+    guild_id TEXT PRIMARY KEY,
+    status TEXT DEFAULT 'CLOSED',
+    server_code TEXT DEFAULT 'MVERP',
+    updated_by TEXT,
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS server_votes (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    channel_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    creator_id TEXT NOT NULL,
+    status TEXT DEFAULT 'active',
+    duration_minutes INTEGER DEFAULT 5,
+    ends_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS server_vote_entries (
+    vote_id TEXT NOT NULL REFERENCES server_votes(id) ON DELETE CASCADE,
+    discord_id TEXT NOT NULL,
+    choice TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (vote_id, discord_id)
+);
+
+CREATE TABLE IF NOT EXISTS server_vote_removals (
+    id TEXT PRIMARY KEY,
+    vote_id TEXT NOT NULL REFERENCES server_votes(id) ON DELETE CASCADE,
+    discord_id TEXT NOT NULL,
+    removed_at TIMESTAMP DEFAULT NOW()
+);
+
+-- =====================
+-- POLICE & CRIMINAL RECORDS
+-- =====================
+CREATE TABLE IF NOT EXISTS criminal_records (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT NOT NULL,
+    discord_id TEXT NOT NULL,
+    crime_type TEXT NOT NULL,
+    description TEXT NOT NULL,
+    fine_amount NUMERIC DEFAULT 0,
+    jail_time_minutes INTEGER DEFAULT 0,
+    officer_id TEXT NOT NULL,
+    officer_name TEXT,
+    status TEXT DEFAULT 'arrested',
+    paid BOOLEAN DEFAULT FALSE,
+    paid_at TIMESTAMP,
+    items_found TEXT,
+    items_seized TEXT,
+    rights_read BOOLEAN DEFAULT TRUE,
+    physical_state TEXT DEFAULT 'Ileso',
+    evidence_url TEXT,
+    roblox_username TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS guild_configs (
+    id TEXT PRIMARY KEY,
+    guild_id TEXT UNIQUE NOT NULL,
+    police_role_ids TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+

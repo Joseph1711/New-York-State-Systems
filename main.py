@@ -1,3 +1,13 @@
+import sys
+try:
+    import audioop
+except ModuleNotFoundError:
+    try:
+        import audioop_lts as audioop
+        sys.modules["audioop"] = audioop
+    except ImportError:
+        pass
+
 import os
 import asyncio
 import logging
@@ -33,22 +43,35 @@ def _log_startup_diagnostics():
     logger.info("=" * 50)
 
 COGS = [
+    "bot.cogs.verification",
+    "bot.cogs.dni",
     "bot.cogs.economy",
     "bot.cogs.bank",
     "bot.cogs.inventory",
     "bot.cogs.marketplace",
-    "bot.cogs.departments",
     "bot.cogs.companies",
+    "bot.cogs.jobs",
     "bot.cogs.properties",
+    "bot.cogs.vehicles",
+    "bot.cogs.weapons",
+    "bot.cogs.crimen",
     "bot.cogs.social",
     "bot.cogs.tickets",
-    "bot.cogs.verification",
-    "bot.cogs.crimen",
+    "bot.cogs.updates",
+    "bot.cogs.departments",
+    "bot.cogs.roblox",
+    "bot.cogs.bolo",
+    "bot.cogs.cases",
+    "bot.cogs.incidents",
+    "bot.cogs.announcements",
+    "bot.cogs.police",
+    "bot.cogs.server_control",
     "bot.cogs.admin",
     "bot.cogs.help",
+    "bot.cogs.guia",
 ]
 
-class MiamiViceBot(commands.Bot):
+class NYCRoleplayBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -78,13 +101,13 @@ def configure_bot(bot):
 
 async def main():
     _log_startup_diagnostics()
-    bot = MiamiViceBot()
     token = os.environ.get("DISCORD_TOKEN")
+    bot = NYCRoleplayBot()
     set_bot(
         bot,
         asyncio.get_running_loop(),
         token,
-        factory=MiamiViceBot,
+        factory=NYCRoleplayBot,
         configurator=configure_bot,
     )
     keep_alive()
@@ -109,27 +132,39 @@ async def main():
     try:
         from scripts.init_db import init_db
         init_db()
+        from bot.db import run_migrations
+        run_migrations(force=True)
     except Exception as e:
         logger.error(f"[DB] Error inicializando tablas: {e}")
         logger.warning("El panel seguirá disponible; no se pudo inicializar la base de datos.")
         await asyncio.Event().wait()
         return
 
-    try:
-        configure_bot(bot)
-    except Exception as error:
-        logger.exception("No se pudo configurar el bot: %s", error)
-        logger.warning("El panel seguirá disponible; corrige la configuración para encender el bot.")
-        await asyncio.Event().wait()
-        return
-
-    # Intentar conectar con reintentos
-    max_retries = 3
+    # Intentar conectar con reintentos y regeneración de instancia limpia
+    max_retries = 10
     retry_count = 0
     
     while retry_count < max_retries:
         try:
             logger.info(f"Intento de conexión {retry_count + 1}/{max_retries}...")
+            
+            # Si bot es None o fue cerrado previamente, instanciar y configurar uno nuevo
+            if bot is None or bot.is_closed():
+                bot = NYCRoleplayBot()
+                configure_bot(bot)
+                set_bot(
+                    bot,
+                    asyncio.get_running_loop(),
+                    token,
+                    factory=NYCRoleplayBot,
+                    configurator=configure_bot,
+                )
+            else:
+                try:
+                    configure_bot(bot)
+                except Exception:
+                    pass
+
             bot_task = asyncio.create_task(bot.start(token))
             set_bot_task(bot_task)
             await bot_task
@@ -138,20 +173,52 @@ async def main():
             logger.error("❌ Discord rechazó DISCORD_TOKEN; verifica que sea válido.")
             logger.error("La web continúa disponible en http://localhost:3000")
             raise
+        except discord.HTTPException as http_err:
+            retry_count += 1
+            is_429 = getattr(http_err, 'status', None) == 429 or "429" in str(http_err)
+            wait_time = min(30 * retry_count, 180) if is_429 else 10
+            
+            # Cerrar la sesión y descartar la instancia para que el próximo intento cree una limpia
+            try:
+                if bot and not bot.is_closed():
+                    await bot.close()
+            except Exception:
+                pass
+            bot = None
+
+            if is_429:
+                logger.warning(
+                    f"⚠️ Discord 429 Rate Limit (Demasiadas peticiones). "
+                    f"Esperando {wait_time}s antes de reintentar... ({retry_count}/{max_retries})"
+                )
+            else:
+                logger.warning(f"Error HTTP de Discord ({http_err}). Reintentando en {wait_time}s... ({retry_count}/{max_retries})")
+            
+            await asyncio.sleep(wait_time)
         except (discord.ConnectionClosed, OSError) as e:
             retry_count += 1
-            logger.warning(f"Conexión perdida: {e}. Reintentando en 5s... ({retry_count}/{max_retries})")
-            if retry_count >= max_retries:
-                logger.error("No se pudo conectar después de múltiples intentos.")
-                raise RuntimeError("Discord no está disponible después de múltiples intentos") from e
-            await asyncio.sleep(5)  # Esperar antes de reintentar
+            try:
+                if bot and not bot.is_closed():
+                    await bot.close()
+            except Exception:
+                pass
+            bot = None
+            logger.warning(f"Conexión perdida: {e}. Reintentando en 10s... ({retry_count}/{max_retries})")
+            await asyncio.sleep(10)
         except Exception as error:
             logger.error(f"Error inesperado: {error}")
             retry_count += 1
+            try:
+                if bot and not bot.is_closed():
+                    await bot.close()
+            except Exception:
+                pass
+            bot = None
             if retry_count >= max_retries:
+                logger.warning("Alcanzado límite de intentos. Manteniendo el panel web activo.")
                 await asyncio.Event().wait()
                 return
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
 
 if __name__ == "__main__":
     asyncio.run(main())
